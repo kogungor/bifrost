@@ -1,0 +1,30 @@
+# Bifrost binary
+bifrost
+bifrost.exe
+
+# Go build artifacts
+*.o
+*.a
+*.so
+
+# Go test/coverage
+*.test
+*.out
+coverage.html
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Bifrost runtime data
+.bifrost/
+
+# Dependencies
+vendor/
