@@ -59,6 +59,12 @@ brew tap kogungor/bifrost
 brew install --cask bifrost
 ```
 
+### Shell One-Liner
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kogungor/bifrost/dev/install.sh | sh
+```
+
 ### Manual (all platforms)
 
 Download the binary for your platform from [GitHub Releases](https://github.com/kogungor/bifrost/releases), then:
@@ -66,16 +72,6 @@ Download the binary for your platform from [GitHub Releases](https://github.com/
 ```bash
 chmod +x bifrost
 sudo mv bifrost /usr/local/bin/
-```
-
-Or install to a user-local path:
-
-```bash
-chmod +x bifrost
-mkdir -p ~/.bifrost/bin
-mv bifrost ~/.bifrost/bin/
-echo 'export PATH="$HOME/.bifrost/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
 ```
 
 ### Verify Installation
@@ -111,6 +107,12 @@ To overwrite existing command files (e.g., after an update):
 
 ```bash
 bifrost install --force
+```
+
+To also register Bifrost as an MCP server (exposes snapshot operations as tool calls):
+
+```bash
+bifrost install --mcp
 ```
 
 ### 2. Initialize a Project (optional)
@@ -274,7 +276,8 @@ REST API for the mobile app. Currently in beta.
 
 | Command                      | Description                                   |
 | ---------------------------- | --------------------------------------------- |
-| `bifrost install`            | Register slash commands for detected AI tools |
+| `bifrost install`            | Register slash commands for detected AI tools  |
+| `bifrost install --mcp`      | Also register Bifrost as an MCP server        |
 | `bifrost init`               | Initialize Bifrost in the current project     |
 | `bifrost status`             | Show the current bridge state                 |
 | `bifrost doctor`             | Diagnose installation and configuration       |
@@ -332,6 +335,25 @@ Adding a new tool requires only a new adapter file — no changes to core logic.
 | `.bifrost/history/`   | Archived snapshots                  | No      |
 
 `.bifrost/` is automatically added to `.gitignore`.
+
+## MCP Server
+
+Bifrost can run as an [MCP](https://modelcontextprotocol.io/) server, exposing snapshot operations as formal tool calls over stdio JSON-RPC. AI tools that support MCP can call `bifrost_read_snapshot`, `bifrost_write_snapshot`, `bifrost_write_note`, and `bifrost_status` directly — no slash commands needed.
+
+Register it:
+
+```bash
+bifrost install --mcp
+```
+
+This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`). The server runs as a subprocess — no network sockets, no background daemon.
+
+| Tool                     | Description                                    |
+| ------------------------ | ---------------------------------------------- |
+| `bifrost_read_snapshot`  | Read the current session snapshot              |
+| `bifrost_write_snapshot` | Write a new snapshot (auto-archives previous)  |
+| `bifrost_write_note`     | Write a freeform handoff note                  |
+| `bifrost_status`         | Quick status: snapshot age, history count, etc. |
 
 ## What Bifrost Is Not
 
