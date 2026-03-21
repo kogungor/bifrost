@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/kog/bifrost/internal/adapters"
-	"github.com/kog/bifrost/internal/ui"
+	"github.com/kogungor/bifrost/internal/adapters"
+	"github.com/kogungor/bifrost/internal/ui"
 	"github.com/spf13/cobra"
 )
 
