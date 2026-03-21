@@ -3,7 +3,7 @@ package cli
 import (
 	"os"
 
-	"github.com/kog/bifrost/internal/project"
+	"github.com/kogungor/bifrost/internal/project"
 )
 
 // resolveProject returns the project root, using --project flag or auto-detection.

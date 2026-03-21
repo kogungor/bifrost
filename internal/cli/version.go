@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/kog/bifrost/internal/ui"
+	"github.com/kogungor/bifrost/internal/ui"
 	"github.com/spf13/cobra"
 )
 
