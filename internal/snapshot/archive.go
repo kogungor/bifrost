@@ -33,25 +33,35 @@ func Archive(projectRoot string) error {
 }
 
 func archiveRaw(projectRoot string, data []byte, name string) error {
-	if err := os.MkdirAll(HistoryDir(projectRoot), 0755); err != nil {
+	if err := os.MkdirAll(HistoryDir(projectRoot), 0700); err != nil {
 		return err
 	}
 
 	dest := filepath.Join(HistoryDir(projectRoot), name+".md")
 
-	// Don't overwrite existing archives
-	if _, err := os.Stat(dest); err == nil {
-		// Append a suffix to avoid collision
+	// Use O_EXCL to atomically check-and-create, avoiding TOCTOU races
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+		// File exists — append a suffix to avoid collision
 		for i := 1; ; i++ {
 			candidate := filepath.Join(HistoryDir(projectRoot), fmt.Sprintf("%s-%d.md", name, i))
-			if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			f, err = os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err == nil {
 				dest = candidate
 				break
 			}
+			if !os.IsExist(err) {
+				return err
+			}
 		}
 	}
+	defer f.Close()
 
-	return os.WriteFile(dest, data, 0644)
+	_, err = f.Write(data)
+	return err
 }
 
 // History returns all archived snapshots sorted newest-first.
@@ -110,7 +120,7 @@ func Restore(projectRoot string, index int) error {
 	data := Render(history[index])
 
 	tmp := SessionPath(projectRoot) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(data), 0644); err != nil {
+	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, SessionPath(projectRoot))
