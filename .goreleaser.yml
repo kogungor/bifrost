@@ -5,7 +5,7 @@ builds:
     binary: bifrost
     env: [CGO_ENABLED=0]
     ldflags:
-      - -s -w -X github.com/kog/bifrost/internal/cli.Version={{.Version}}
+      - -s -w -X github.com/kogungor/bifrost/internal/cli.Version={{.Version}}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 
@@ -21,15 +21,16 @@ checksum:
 
 release:
   github:
-    owner: kog
+    owner: kogungor
     name: bifrost
 
 brews:
   - name: bifrost
     repository:
-      owner: kog
-      name: homebrew-bifrost
-    homepage: https://github.com/kog/bifrost
+      owner: kogungor
+      name: bifrost
+      directory: Formula
+    homepage: https://github.com/kogungor/bifrost
     description: Session context bridge between AI coding tools
     install: |
       bin.install "bifrost"

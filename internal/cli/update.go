@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kog/bifrost/internal/ui"
+	"github.com/kogungor/bifrost/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,7 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-const githubReleasesURL = "https://api.github.com/repos/kog/bifrost/releases/latest"
+const githubReleasesURL = "https://api.github.com/repos/kogungor/bifrost/releases/latest"
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
