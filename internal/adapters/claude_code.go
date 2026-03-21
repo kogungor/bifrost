@@ -11,7 +11,10 @@ type ClaudeCode struct {
 }
 
 func newClaudeCode() *ClaudeCode {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 	return &ClaudeCode{homeDir: home}
 }
 
