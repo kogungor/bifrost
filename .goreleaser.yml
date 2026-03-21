@@ -10,11 +10,11 @@ builds:
     goarch: [amd64, arm64]
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
@@ -24,16 +24,13 @@ release:
     owner: kogungor
     name: bifrost
 
-brews:
+homebrew_casks:
   - name: bifrost
+    directory: Casks
+    binaries:
+      - bifrost
+    homepage: https://github.com/kogungor/bifrost
+    description: Session context bridge between AI coding tools
     repository:
       owner: kogungor
       name: bifrost
-      directory: Formula
-    homepage: https://github.com/kogungor/bifrost
-    description: Session context bridge between AI coding tools
-    install: |
-      bin.install "bifrost"
-      generate_completions_from_executable(bin/"bifrost", "completion")
-    test: |
-      system "#{bin}/bifrost", "version"
