@@ -55,10 +55,10 @@ func HistoryDir(projectRoot string) string {
 
 // EnsureDir creates .bifrost/ and .bifrost/history/ if they don't exist.
 func EnsureDir(projectRoot string) error {
-	if err := os.MkdirAll(Dir(projectRoot), 0755); err != nil {
+	if err := os.MkdirAll(Dir(projectRoot), 0700); err != nil {
 		return err
 	}
-	return os.MkdirAll(HistoryDir(projectRoot), 0755)
+	return os.MkdirAll(HistoryDir(projectRoot), 0700)
 }
 
 // Read parses .bifrost/session.md in the given project root.
@@ -92,7 +92,7 @@ func Write(projectRoot string, s *Snapshot) error {
 
 	// Atomic write: temp file then rename
 	tmp := SessionPath(projectRoot) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(data), 0644); err != nil {
+	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, SessionPath(projectRoot))
@@ -141,7 +141,7 @@ func WriteNote(projectRoot string, note *HandoffNote) error {
 	b.WriteString(note.Text + "\n")
 
 	tmp := NotePath(projectRoot) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0644); err != nil {
+	if err := os.WriteFile(tmp, []byte(b.String()), 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, NotePath(projectRoot))

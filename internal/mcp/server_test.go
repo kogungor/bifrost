@@ -278,3 +278,102 @@ func TestReadSnapshotNotFound(t *testing.T) {
 		t.Errorf("expected found=false for empty project")
 	}
 }
+
+func TestWriteSnapshotPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "test",
+				"current_task": "test",
+				"active_files": []map[string]string{
+					{"path": "../../../etc/passwd", "note": "traversal"},
+				},
+			},
+		}),
+	)
+
+	if len(resps) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(resps))
+	}
+	errObj, ok := resps[0]["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error for path traversal")
+	}
+	msg := errObj["message"].(string)
+	if !strings.Contains(msg, "invalid file path") {
+		t.Errorf("expected 'invalid file path' error, got: %s", msg)
+	}
+}
+
+func TestWriteSnapshotAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "test",
+				"current_task": "test",
+				"active_files": []map[string]string{
+					{"path": "/etc/passwd", "note": "absolute"},
+				},
+			},
+		}),
+	)
+
+	errObj, ok := resps[0]["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error for absolute path")
+	}
+	msg := errObj["message"].(string)
+	if !strings.Contains(msg, "invalid file path") {
+		t.Errorf("expected 'invalid file path' error, got: %s", msg)
+	}
+}
+
+func TestWriteSnapshotFieldTooLong(t *testing.T) {
+	dir := t.TempDir()
+	bigString := strings.Repeat("x", maxFieldLen+1)
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "test",
+				"current_task": bigString,
+			},
+		}),
+	)
+
+	errObj, ok := resps[0]["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error for oversized field")
+	}
+	msg := errObj["message"].(string)
+	if !strings.Contains(msg, "exceeds") {
+		t.Errorf("expected 'exceeds' error, got: %s", msg)
+	}
+}
+
+func TestWriteNoteTooLong(t *testing.T) {
+	dir := t.TempDir()
+	bigText := strings.Repeat("x", maxNoteLen+1)
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_note",
+			"arguments": map[string]any{
+				"text": bigText,
+				"from": "test",
+			},
+		}),
+	)
+
+	errObj, ok := resps[0]["error"].(map[string]any)
+	if !ok {
+		t.Fatal("expected error for oversized note")
+	}
+	msg := errObj["message"].(string)
+	if !strings.Contains(msg, "exceeds") {
+		t.Errorf("expected 'exceeds' error, got: %s", msg)
+	}
+}
