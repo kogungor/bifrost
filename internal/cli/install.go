@@ -117,7 +117,7 @@ func installAdapterCommands(a adapters.Adapter) error {
 			}
 		}
 
-		if err := os.WriteFile(dest, data, 0644); err != nil {
+		if err := os.WriteFile(dest, data, 0600); err != nil {
 			return err
 		}
 	}
@@ -136,9 +136,12 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 		}
 	}
 
-	// Ensure mcpServers key exists
+	// Ensure mcpServers key exists and is a valid map
 	servers, ok := config["mcpServers"].(map[string]any)
 	if !ok {
+		if config["mcpServers"] != nil {
+			return fmt.Errorf("mcpServers in %s is not a JSON object", mcpPath)
+		}
 		servers = make(map[string]any)
 		config["mcpServers"] = servers
 	}
@@ -155,7 +158,7 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 	}
 
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(mcpPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(mcpPath), 0700); err != nil {
 		return err
 	}
 
@@ -164,7 +167,7 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 		return err
 	}
 
-	if err := os.WriteFile(mcpPath, append(out, '\n'), 0644); err != nil {
+	if err := os.WriteFile(mcpPath, append(out, '\n'), 0600); err != nil {
 		return err
 	}
 

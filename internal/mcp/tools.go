@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kogungor/bifrost/internal/snapshot"
+)
+
+// Input size limits to prevent resource exhaustion.
+const (
+	maxFieldLen    = 10000 // max chars per text field
+	maxArrayItems  = 100   // max items per array field
+	maxNoteLen     = 50000 // max chars for handoff note
 )
 
 // ToolDefinition describes a tool for tools/list.
@@ -208,10 +216,39 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("source_tool and current_task are required")
 	}
 
+	// Validate field sizes
+	if len(params.CurrentTask) > maxFieldLen {
+		return nil, fmt.Errorf("current_task exceeds %d characters", maxFieldLen)
+	}
+	if len(params.NextStep) > maxFieldLen {
+		return nil, fmt.Errorf("next_step exceeds %d characters", maxFieldLen)
+	}
+	if len(params.SourceTool) > 100 {
+		return nil, fmt.Errorf("source_tool exceeds 100 characters")
+	}
+
+	// Validate array sizes
+	if len(params.Status) > maxArrayItems {
+		return nil, fmt.Errorf("status exceeds %d items", maxArrayItems)
+	}
+	if len(params.ActiveFiles) > maxArrayItems {
+		return nil, fmt.Errorf("active_files exceeds %d items", maxArrayItems)
+	}
+	if len(params.Decisions) > maxArrayItems {
+		return nil, fmt.Errorf("decisions exceeds %d items", maxArrayItems)
+	}
+	if len(params.EnvNotes) > maxArrayItems {
+		return nil, fmt.Errorf("environment_notes exceeds %d items", maxArrayItems)
+	}
+
 	projectName := filepath.Base(ts.projectRoot)
 
 	var activeFiles []snapshot.ActiveFile
 	for _, f := range params.ActiveFiles {
+		// Reject paths with traversal or absolute paths
+		if strings.Contains(f.Path, "..") || filepath.IsAbs(f.Path) {
+			return nil, fmt.Errorf("invalid file path: %s", f.Path)
+		}
 		activeFiles = append(activeFiles, snapshot.ActiveFile{Path: f.Path, Note: f.Note})
 	}
 
@@ -254,6 +291,12 @@ func (ts *ToolSet) writeNote(args json.RawMessage) (any, error) {
 
 	if params.Text == "" || params.From == "" {
 		return nil, fmt.Errorf("text and from are required")
+	}
+	if len(params.Text) > maxNoteLen {
+		return nil, fmt.Errorf("text exceeds %d characters", maxNoteLen)
+	}
+	if len(params.From) > 100 {
+		return nil, fmt.Errorf("from exceeds 100 characters")
 	}
 
 	note := &snapshot.HandoffNote{
