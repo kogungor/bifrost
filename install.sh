@@ -33,11 +33,38 @@ echo "Latest version: ${VERSION}"
 # Download
 TARBALL="bifrost_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${TARBALL}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading ${URL}..."
 curl -fsSL "$URL" -o "${TMP}/${TARBALL}"
+
+# Verify checksum
+echo "Verifying checksum..."
+curl -fsSL "$CHECKSUMS_URL" -o "${TMP}/checksums.txt"
+EXPECTED="$(grep "${TARBALL}" "${TMP}/checksums.txt" | awk '{print $1}')"
+if [ -z "$EXPECTED" ]; then
+  echo "Error: checksum not found for ${TARBALL}"
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "${TMP}/${TARBALL}" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "${TMP}/${TARBALL}" | awk '{print $1}')"
+else
+  echo "Warning: no sha256sum or shasum found, skipping checksum verification"
+  ACTUAL="$EXPECTED"
+fi
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "Error: checksum mismatch!"
+  echo "  Expected: $EXPECTED"
+  echo "  Actual:   $ACTUAL"
+  exit 1
+fi
+echo "Checksum verified."
 
 # Extract
 tar -xzf "${TMP}/${TARBALL}" -C "$TMP"
