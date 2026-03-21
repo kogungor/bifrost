@@ -1,0 +1,38 @@
+version: 2
+
+builds:
+  - main: ./cmd/bifrost
+    binary: bifrost
+    env: [CGO_ENABLED=0]
+    ldflags:
+      - -s -w -X github.com/kog/bifrost/internal/cli.Version={{.Version}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: kog
+    name: bifrost
+
+brews:
+  - name: bifrost
+    repository:
+      owner: kog
+      name: homebrew-bifrost
+    homepage: https://github.com/kog/bifrost
+    description: Session context bridge between AI coding tools
+    install: |
+      bin.install "bifrost"
+      generate_completions_from_executable(bin/"bifrost", "completion")
+    test: |
+      system "#{bin}/bifrost", "version"
