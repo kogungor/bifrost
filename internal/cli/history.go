@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -79,40 +78,14 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	ui.Blank()
 	ui.Dim("Run 'bifrost restore <n>' to restore a snapshot.")
 
-	// Also check for handoff note
-	notePath := filepath.Join(root, ".bifrost", "handoff.md")
-	if _, err := os.Stat(notePath); err == nil {
-		data, _ := os.ReadFile(notePath)
-		if len(data) > 0 {
-			// Extract note text (skip frontmatter)
-			note := extractNoteText(string(data))
-			if note != "" {
-				ui.Blank()
-				ui.Dim(fmt.Sprintf("  Latest handoff note: %s", truncate(note, 60)))
-			}
-		}
+	// Show latest handoff note if present
+	note, _ := snapshot.ReadNote(root)
+	if note != nil && note.Text != "" {
+		ui.Blank()
+		ui.Dim(fmt.Sprintf("  Latest handoff note: %s", truncate(note.Text, 60)))
 	}
 
 	return nil
-}
-
-func extractNoteText(content string) string {
-	// Skip YAML frontmatter
-	if strings.HasPrefix(content, "---\n") {
-		rest := content[4:]
-		idx := strings.Index(rest, "\n---\n")
-		if idx >= 0 {
-			content = strings.TrimSpace(rest[idx+4:])
-		}
-	}
-	// Return first non-empty line
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 func truncate(s string, max int) string {
