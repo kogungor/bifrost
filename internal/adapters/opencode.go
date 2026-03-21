@@ -11,7 +11,10 @@ type OpenCode struct {
 }
 
 func newOpenCode() *OpenCode {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 	return &OpenCode{homeDir: home}
 }
 

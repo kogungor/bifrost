@@ -2,6 +2,7 @@ package cli
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,12 +25,14 @@ var (
 	installAdapterFlag string
 	installForce       bool
 	installDryRun      bool
+	installMCP         bool
 )
 
 func init() {
 	installCmd.Flags().StringVar(&installAdapterFlag, "adapter", "", "Install for a specific adapter only (claude-code, opencode)")
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Overwrite existing command files")
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "Print what would happen without doing it")
+	installCmd.Flags().BoolVar(&installMCP, "mcp", false, "Also register Bifrost as an MCP server")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -67,6 +70,21 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		ui.Dim("Install Claude Code or OpenCode, then run 'bifrost install' again.")
 	}
 
+	if installMCP {
+		for _, a := range targets {
+			if !a.IsInstalled() {
+				continue
+			}
+			mcpPath := a.MCPConfigPath()
+			if mcpPath == "" {
+				continue
+			}
+			if err := installMCPConfig(a, mcpPath); err != nil {
+				ui.Error(fmt.Sprintf("%s  MCP registration failed", a.DisplayName()), err.Error())
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -99,11 +117,60 @@ func installAdapterCommands(a adapters.Adapter) error {
 			}
 		}
 
-		if err := os.WriteFile(dest, data, 0644); err != nil {
+		if err := os.WriteFile(dest, data, 0600); err != nil {
 			return err
 		}
 	}
 
 	ui.Success(fmt.Sprintf("%s  commands registered  (%s)", a.DisplayName(), cmdsDir))
+	return nil
+}
+
+func installMCPConfig(a adapters.Adapter, mcpPath string) error {
+	// Read existing config if present
+	config := make(map[string]any)
+	data, err := os.ReadFile(mcpPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("parse existing %s: %w", mcpPath, err)
+		}
+	}
+
+	// Ensure mcpServers key exists and is a valid map
+	servers, ok := config["mcpServers"].(map[string]any)
+	if !ok {
+		if config["mcpServers"] != nil {
+			return fmt.Errorf("mcpServers in %s is not a JSON object", mcpPath)
+		}
+		servers = make(map[string]any)
+		config["mcpServers"] = servers
+	}
+
+	// Add bifrost entry
+	servers["bifrost"] = map[string]any{
+		"command": "bifrost",
+		"args":    []string{"mcp-serve"},
+	}
+
+	if installDryRun {
+		ui.Section(a.DisplayName(), fmt.Sprintf("would write MCP config to %s", mcpPath))
+		return nil
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(mcpPath), 0700); err != nil {
+		return err
+	}
+
+	out, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(mcpPath, append(out, '\n'), 0600); err != nil {
+		return err
+	}
+
+	ui.Success(fmt.Sprintf("%s  MCP server registered  (%s)", a.DisplayName(), mcpPath))
 	return nil
 }
