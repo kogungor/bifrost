@@ -33,4 +33,5 @@ homebrew_casks:
     description: Session context bridge between AI coding tools
     repository:
       owner: kogungor
-      name: bifrost
+      name: homebrew-bifrost
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
