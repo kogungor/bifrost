@@ -2,7 +2,7 @@
 
 > When tokens run dry, the bridge holds.
 
-A session context bridge between AI coding tools. Write `/handoff` in one tool, `/handin` in another. Continue exactly where you left off.
+A session context bridge between AI coding tools. Write `/handoff` in one tool, `/handin` in another. Continue exactly where you left off. Create implementation plans with `/plan` in one tool, get critical analysis with `/review` in another.
 
 ---
 
@@ -29,6 +29,8 @@ Claude Code                              OpenCode
 │              │    session.md          │              │
 │  /handin  ◀──┼──── .bifrost/ ────────┼── /handoff   │
 │              │    session.md          │              │
+│  /plan   ────┼──── .bifrost/ ────────▶┼── /review    │
+│              │    *.plan.md           │              │
 └──────────────┘                        └──────────────┘
 ```
 
@@ -84,7 +86,7 @@ bifrost version
 
 ### 1. Register Slash Commands
 
-This installs `/handoff` and `/handin` for all detected AI tools:
+This installs `/handoff`, `/handin`, `/plan`, and `/review` for all detected AI tools:
 
 ```bash
 bifrost install
@@ -229,6 +231,44 @@ The AI reads the snapshot and presents a briefing:
 
 The AI waits for your confirmation before starting any work.
 
+### Creating Plans
+
+In any AI coding tool, type:
+
+```
+/plan auth-refactor
+```
+
+The AI creates a structured implementation plan and saves it to `.bifrost/auth-refactor.plan.md`:
+
+```
+  Plan written to .bifrost/auth-refactor.plan.md
+
+  Title    Auth token refresh refactor
+  Status   draft
+  Steps    5 steps defined (0% complete)
+  Files    8 files referenced
+
+  Ask another AI tool to run /review to get a critical analysis.
+  Use bifrost_update_plan to change status to "active" when work begins.
+```
+
+Plans support a full lifecycle: `draft` → `active` → `completed` → `archived`.
+
+### Reviewing Plans
+
+Switch to another AI tool and type:
+
+```
+/review auth-refactor
+```
+
+The AI reads the plan, analyzes it critically (edge cases, security, architecture, missing steps), and adds review notes directly to the plan file. You can also review arbitrary files:
+
+```
+/review docs/rfc-auth.md
+```
+
 ### Snapshot Freshness
 
 `/handin` always shows the snapshot age. If it's older than 2 hours, a warning is shown. If older than 24 hours, a prominent warning appears. You're never blocked — just informed.
@@ -327,18 +367,19 @@ Adding a new tool requires only a new adapter file — no changes to core logic.
 
 ## Files
 
-| Path                  | Purpose                             | In Git? |
-| --------------------- | ----------------------------------- | ------- |
-| `BIFROST.md`          | Project config (stack, conventions) | Yes     |
-| `.bifrost/session.md` | Active snapshot                     | No      |
-| `.bifrost/handoff.md` | Freeform handoff note               | No      |
-| `.bifrost/history/`   | Archived snapshots                  | No      |
+| Path                        | Purpose                             | In Git? |
+| --------------------------- | ----------------------------------- | ------- |
+| `BIFROST.md`                | Project config (stack, conventions) | Yes     |
+| `.bifrost/session.md`       | Active snapshot                     | No      |
+| `.bifrost/handoff.md`       | Freeform handoff note               | No      |
+| `.bifrost/history/`         | Archived snapshots                  | No      |
+| `.bifrost/<name>.plan.md`   | Implementation plans                | No      |
 
 `.bifrost/` is automatically added to `.gitignore`.
 
 ## MCP Server
 
-Bifrost can run as an [MCP](https://modelcontextprotocol.io/) server, exposing snapshot operations as formal tool calls over stdio JSON-RPC. AI tools that support MCP can call `bifrost_read_snapshot`, `bifrost_write_snapshot`, `bifrost_write_note`, and `bifrost_status` directly — no slash commands needed.
+Bifrost can run as an [MCP](https://modelcontextprotocol.io/) server, exposing snapshot and plan operations as formal tool calls over stdio JSON-RPC. AI tools that support MCP can call these tools directly — no slash commands needed.
 
 Register it:
 
@@ -348,12 +389,24 @@ bifrost install --mcp
 
 This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`). The server runs as a subprocess — no network sockets, no background daemon.
 
+### Snapshot Tools
+
 | Tool                     | Description                                    |
 | ------------------------ | ---------------------------------------------- |
 | `bifrost_read_snapshot`  | Read the current session snapshot              |
 | `bifrost_write_snapshot` | Write a new snapshot (auto-archives previous)  |
 | `bifrost_write_note`     | Write a freeform handoff note                  |
-| `bifrost_status`         | Quick status: snapshot age, history count, etc. |
+| `bifrost_status`         | Quick status: snapshot age, history count, plan count |
+
+### Plan Tools
+
+| Tool                     | Description                                                   |
+| ------------------------ | ------------------------------------------------------------- |
+| `bifrost_read_plan`      | Read a named plan (default: "plan")                          |
+| `bifrost_write_plan`     | Create a new plan with title, goal, steps, and constraints   |
+| `bifrost_update_plan`    | Add review notes, update step statuses/content, change plan status |
+| `bifrost_delete_plan`    | Delete a named plan                                          |
+| `bifrost_list_plans`     | List all plans with name, status, title, and completion %    |
 
 ## What Bifrost Is Not
 
@@ -362,7 +415,7 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 - A model router or proxy
 - A replacement for CLAUDE.md or AGENTS.md
 
-Bifrost is a point-in-time session snapshot protocol with a two-command UX.
+Bifrost is a point-in-time session snapshot protocol and cross-tool planning workflow with a simple slash command UX.
 
 ## Security
 
