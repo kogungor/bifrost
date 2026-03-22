@@ -20,14 +20,14 @@ go test ./...
 cmd/bifrost/           Entry point, embeds slash command files
 internal/
   cli/                 Cobra commands (install, init, doctor, status, history, etc.)
-  snapshot/            Snapshot read/write/parse/archive logic
+  snapshot/            Snapshot read/write/parse/archive logic + plan management
   project/             Project root detection, .gitignore management
   adapters/            AI tool adapters (Claude Code, OpenCode)
-  mcp/                 MCP server (stdio JSON-RPC)
+  mcp/                 MCP server (stdio JSON-RPC, 9 tools: 4 snapshot + 5 plan)
   ui/                  Terminal output helpers (colors, formatting)
 commands/              Embedded slash command markdown files
-  claude-code/         /handoff and /handin for Claude Code
-  opencode/            /handoff and /handin for OpenCode
+  claude-code/         /handoff, /handin, /plan, /review for Claude Code
+  opencode/            /handoff, /handin, /plan, /review for OpenCode
 ```
 
 ## Running Tests
@@ -59,7 +59,7 @@ type Adapter interface {
 ```
 
 2. Register it in `internal/adapters/registry.go` → `All()`
-3. Add slash commands in `commands/<name>/handoff.md` and `commands/<name>/handin.md`
+3. Add slash commands in `commands/<name>/handoff.md`, `commands/<name>/handin.md`, `commands/<name>/plan.md`, and `commands/<name>/review.md`
 4. Add tests in `internal/adapters/<name>_test.go`
 
 ## Adding a New CLI Command
