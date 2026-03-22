@@ -127,6 +127,127 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 				"properties": map[string]any{},
 			},
 		},
+		{
+			Name:        "bifrost_read_plan",
+			Description: "Read a named Bifrost implementation plan. Returns the plan with title, goal, steps, constraints, review notes, and completion percentage.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Plan name (defaults to \"plan\"). Maps to .bifrost/<name>.plan.md",
+					},
+				},
+			},
+		},
+		{
+			Name:        "bifrost_write_plan",
+			Description: "Create or overwrite a named Bifrost implementation plan. Automatically fills in timestamps, project name, and bifrost_version.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"source_tool": map[string]any{
+						"type":        "string",
+						"description": "The AI tool writing the plan (e.g. claude-code, opencode)",
+					},
+					"title": map[string]any{
+						"type":        "string",
+						"description": "Plan title",
+					},
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Plan name (defaults to \"plan\"). Maps to .bifrost/<name>.plan.md",
+					},
+					"goal": map[string]any{
+						"type":        "string",
+						"description": "What the plan aims to achieve",
+					},
+					"steps": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"description": map[string]any{"type": "string"},
+								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							},
+							"required": []string{"description"},
+						},
+						"description": "Implementation steps",
+					},
+					"constraints": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Constraints or rules to follow",
+					},
+				},
+				"required": []string{"source_tool", "title"},
+			},
+		},
+		{
+			Name:        "bifrost_update_plan",
+			Description: "Update an existing Bifrost plan: add review notes, update step statuses, edit step descriptions/files, or change plan status.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Plan name (defaults to \"plan\")",
+					},
+					"plan_status": map[string]any{
+						"type":        "string",
+						"enum":        []string{"draft", "active", "completed", "archived"},
+						"description": "Update the plan lifecycle status",
+					},
+					"review_notes": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"from": map[string]any{"type": "string"},
+								"text": map[string]any{"type": "string"},
+							},
+							"required": []string{"from", "text"},
+						},
+						"description": "Review notes to append",
+					},
+					"step_updates": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"index":       map[string]any{"type": "integer", "description": "0-based step index"},
+								"status":      map[string]any{"type": "string", "enum": []string{"pending", "done", "blocked"}},
+								"description": map[string]any{"type": "string", "description": "New step description (optional)"},
+								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "New file list (optional, replaces existing)"},
+							},
+							"required": []string{"index"},
+						},
+						"description": "Step updates (status, description, and/or files)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "bifrost_delete_plan",
+			Description: "Delete a named Bifrost plan.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Plan name (defaults to \"plan\")",
+					},
+				},
+			},
+		},
+		{
+			Name:        "bifrost_list_plans",
+			Description: "List all Bifrost plans in the project. Returns plan names with status and completion percentage.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
 	}
 }
 
@@ -141,6 +262,16 @@ func (ts *ToolSet) Call(name string, args json.RawMessage) (any, error) {
 		return ts.writeNote(args)
 	case "bifrost_status":
 		return ts.status()
+	case "bifrost_read_plan":
+		return ts.readPlan(args)
+	case "bifrost_write_plan":
+		return ts.writePlan(args)
+	case "bifrost_update_plan":
+		return ts.updatePlan(args)
+	case "bifrost_delete_plan":
+		return ts.deletePlan(args)
+	case "bifrost_list_plans":
+		return ts.listPlans()
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -336,5 +467,357 @@ func (ts *ToolSet) status() (any, error) {
 	history, _ := snapshot.History(ts.projectRoot)
 	result["history_count"] = len(history)
 
+	plans, _ := snapshot.ListPlans(ts.projectRoot)
+	result["plan_count"] = len(plans)
+
 	return result, nil
+}
+
+// readPlanParams maps the JSON input for bifrost_read_plan.
+type readPlanParams struct {
+	Name string `json:"name"`
+}
+
+func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
+	var params readPlanParams
+	if args != nil {
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	if params.Name == "" {
+		params.Name = "plan"
+	}
+
+	if err := snapshot.ValidatePlanName(params.Name); err != nil {
+		return nil, err
+	}
+
+	plan, err := snapshot.ReadPlan(ts.projectRoot, params.Name)
+	if err != nil {
+		if errors.Is(err, snapshot.ErrNoPlan) {
+			return map[string]any{"found": false}, nil
+		}
+		return nil, err
+	}
+
+	steps := make([]map[string]any, len(plan.Steps))
+	for i, s := range plan.Steps {
+		files := s.Files
+		if files == nil {
+			files = []string{}
+		}
+		steps[i] = map[string]any{
+			"description": s.Description,
+			"status":      s.Status,
+			"files":       files,
+		}
+	}
+
+	reviewNotes := make([]map[string]string, len(plan.ReviewNotes))
+	for i, rn := range plan.ReviewNotes {
+		reviewNotes[i] = map[string]string{
+			"from": rn.From,
+			"text": rn.Text,
+		}
+	}
+
+	done, pending, blocked := plan.StepSummary()
+
+	return map[string]any{
+		"found": true,
+		"plan": map[string]any{
+			"bifrost_version": plan.BifrostVersion,
+			"created_at":      plan.CreatedAt.UTC().Format(time.RFC3339),
+			"updated_at":      plan.UpdatedAt.UTC().Format(time.RFC3339),
+			"source_tool":     plan.SourceTool,
+			"project":         plan.Project,
+			"status":          plan.Status,
+			"title":           plan.Title,
+			"goal":            plan.Goal,
+			"steps":           steps,
+			"constraints":     plan.Constraints,
+			"review_notes":    reviewNotes,
+			"completion_pct":  plan.CompletionPct(),
+			"steps_done":      done,
+			"steps_pending":   pending,
+			"steps_blocked":   blocked,
+		},
+	}, nil
+}
+
+// writePlanParams maps the JSON input for bifrost_write_plan.
+type writePlanParams struct {
+	SourceTool  string `json:"source_tool"`
+	Title       string `json:"title"`
+	Name        string `json:"name"`
+	Goal        string `json:"goal"`
+	Steps       []struct {
+		Description string   `json:"description"`
+		Files       []string `json:"files"`
+	} `json:"steps"`
+	Constraints []string `json:"constraints"`
+}
+
+func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
+	var params writePlanParams
+	if err := json.Unmarshal(args, &params); err != nil {
+		return nil, fmt.Errorf("invalid params: %w", err)
+	}
+
+	if params.SourceTool == "" || params.Title == "" {
+		return nil, fmt.Errorf("source_tool and title are required")
+	}
+	if params.Name == "" {
+		params.Name = "plan"
+	}
+
+	// Validate sizes
+	if len(params.SourceTool) > 100 {
+		return nil, fmt.Errorf("source_tool exceeds 100 characters")
+	}
+	if len(params.Title) > maxFieldLen {
+		return nil, fmt.Errorf("title exceeds %d characters", maxFieldLen)
+	}
+	if len(params.Goal) > maxFieldLen {
+		return nil, fmt.Errorf("goal exceeds %d characters", maxFieldLen)
+	}
+	if len(params.Steps) > maxArrayItems {
+		return nil, fmt.Errorf("steps exceeds %d items", maxArrayItems)
+	}
+	if len(params.Constraints) > maxArrayItems {
+		return nil, fmt.Errorf("constraints exceeds %d items", maxArrayItems)
+	}
+	for _, c := range params.Constraints {
+		if len(c) > maxFieldLen {
+			return nil, fmt.Errorf("constraint exceeds %d characters", maxFieldLen)
+		}
+	}
+
+	if err := snapshot.ValidatePlanName(params.Name); err != nil {
+		return nil, err
+	}
+
+	projectName := filepath.Base(ts.projectRoot)
+
+	var steps []snapshot.PlanStep
+	for _, s := range params.Steps {
+		if len(s.Description) > maxFieldLen {
+			return nil, fmt.Errorf("step description exceeds %d characters", maxFieldLen)
+		}
+		if len(s.Files) > maxArrayItems {
+			return nil, fmt.Errorf("step files exceeds %d items", maxArrayItems)
+		}
+		for _, f := range s.Files {
+			if strings.Contains(f, "..") || filepath.IsAbs(f) {
+				return nil, fmt.Errorf("invalid file path: %s", f)
+			}
+		}
+		steps = append(steps, snapshot.PlanStep{
+			Description: s.Description,
+			Status:      "pending",
+			Files:       s.Files,
+		})
+	}
+
+	now := time.Now().UTC()
+	plan := &snapshot.Plan{
+		BifrostVersion: 1,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     params.SourceTool,
+		Project:        projectName,
+		Status:         snapshot.PlanStatusDraft,
+		Title:          params.Title,
+		Goal:           params.Goal,
+		Steps:          steps,
+		Constraints:    params.Constraints,
+	}
+
+	if err := snapshot.WritePlan(ts.projectRoot, params.Name, plan); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"ok":         true,
+		"name":       params.Name,
+		"created_at": plan.CreatedAt.Format(time.RFC3339),
+		"project":    projectName,
+	}, nil
+}
+
+// updatePlanParams maps the JSON input for bifrost_update_plan.
+type updatePlanParams struct {
+	Name        string `json:"name"`
+	PlanStatus  string `json:"plan_status"`
+	ReviewNotes []struct {
+		From string `json:"from"`
+		Text string `json:"text"`
+	} `json:"review_notes"`
+	StepUpdates []struct {
+		Index       int      `json:"index"`
+		Status      string   `json:"status"`
+		Description string   `json:"description"`
+		Files       []string `json:"files"`
+	} `json:"step_updates"`
+}
+
+func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
+	var params updatePlanParams
+	if args != nil {
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	if params.Name == "" {
+		params.Name = "plan"
+	}
+
+	if err := snapshot.ValidatePlanName(params.Name); err != nil {
+		return nil, err
+	}
+
+	// Validate sizes
+	if len(params.ReviewNotes) > maxArrayItems {
+		return nil, fmt.Errorf("review_notes exceeds %d items", maxArrayItems)
+	}
+	if len(params.StepUpdates) > maxArrayItems {
+		return nil, fmt.Errorf("step_updates exceeds %d items", maxArrayItems)
+	}
+
+	plan, err := snapshot.ReadPlan(ts.projectRoot, params.Name)
+	if err != nil {
+		if errors.Is(err, snapshot.ErrNoPlan) {
+			return nil, fmt.Errorf("plan %q not found", params.Name)
+		}
+		return nil, err
+	}
+
+	// Update plan status
+	if params.PlanStatus != "" {
+		switch params.PlanStatus {
+		case snapshot.PlanStatusDraft, snapshot.PlanStatusActive, snapshot.PlanStatusCompleted, snapshot.PlanStatusArchived:
+			plan.Status = params.PlanStatus
+		default:
+			return nil, fmt.Errorf("invalid plan status: %s", params.PlanStatus)
+		}
+	}
+
+	// Apply step updates
+	for _, su := range params.StepUpdates {
+		if su.Index < 0 || su.Index >= len(plan.Steps) {
+			return nil, fmt.Errorf("step index %d out of range (0-%d)", su.Index, len(plan.Steps)-1)
+		}
+		if su.Status != "" {
+			switch su.Status {
+			case "pending", "done", "blocked":
+				plan.Steps[su.Index].Status = su.Status
+			default:
+				return nil, fmt.Errorf("invalid step status: %s", su.Status)
+			}
+		}
+		if su.Description != "" {
+			if len(su.Description) > maxFieldLen {
+				return nil, fmt.Errorf("step description exceeds %d characters", maxFieldLen)
+			}
+			plan.Steps[su.Index].Description = su.Description
+		}
+		if su.Files != nil {
+			if len(su.Files) > maxArrayItems {
+				return nil, fmt.Errorf("step files exceeds %d items", maxArrayItems)
+			}
+			for _, f := range su.Files {
+				if strings.Contains(f, "..") || filepath.IsAbs(f) {
+					return nil, fmt.Errorf("invalid file path: %s", f)
+				}
+			}
+			plan.Steps[su.Index].Files = su.Files
+		}
+	}
+
+	// Append review notes
+	for _, rn := range params.ReviewNotes {
+		if rn.From == "" || rn.Text == "" {
+			return nil, fmt.Errorf("review note from and text are required")
+		}
+		if len(rn.From) > 100 {
+			return nil, fmt.Errorf("review note from exceeds 100 characters")
+		}
+		if len(rn.Text) > maxFieldLen {
+			return nil, fmt.Errorf("review note text exceeds %d characters", maxFieldLen)
+		}
+		plan.ReviewNotes = append(plan.ReviewNotes, snapshot.ReviewNote{
+			From: rn.From,
+			Text: rn.Text,
+		})
+	}
+
+	plan.UpdatedAt = time.Now().UTC()
+
+	if err := snapshot.WritePlan(ts.projectRoot, params.Name, plan); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"ok":             true,
+		"name":           params.Name,
+		"status":         plan.Status,
+		"completion_pct": plan.CompletionPct(),
+	}, nil
+}
+
+// deletePlanParams maps the JSON input for bifrost_delete_plan.
+type deletePlanParams struct {
+	Name string `json:"name"`
+}
+
+func (ts *ToolSet) deletePlan(args json.RawMessage) (any, error) {
+	var params deletePlanParams
+	if args != nil {
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+	}
+	if params.Name == "" {
+		params.Name = "plan"
+	}
+
+	if err := snapshot.ValidatePlanName(params.Name); err != nil {
+		return nil, err
+	}
+
+	if err := snapshot.DeletePlan(ts.projectRoot, params.Name); err != nil {
+		if errors.Is(err, snapshot.ErrNoPlan) {
+			return nil, fmt.Errorf("plan %q not found", params.Name)
+		}
+		return nil, err
+	}
+
+	return map[string]any{
+		"ok":   true,
+		"name": params.Name,
+	}, nil
+}
+
+func (ts *ToolSet) listPlans() (any, error) {
+	names, err := snapshot.ListPlans(ts.projectRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	planInfos := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		info := map[string]any{"name": name}
+		plan, err := snapshot.ReadPlan(ts.projectRoot, name)
+		if err == nil {
+			info["status"] = plan.Status
+			info["title"] = plan.Title
+			info["completion_pct"] = plan.CompletionPct()
+		}
+		planInfos = append(planInfos, info)
+	}
+
+	return map[string]any{
+		"plans": planInfos,
+	}, nil
 }
