@@ -101,7 +101,7 @@ func installAdapterCommands(a adapters.Adapter) error {
 		return err
 	}
 
-	for _, name := range []string{"handoff.md", "handin.md"} {
+	for _, name := range []string{"handoff.md", "handin.md", "plan.md", "review.md"} {
 		src := fmt.Sprintf("commands/%s/%s", adapterName, name)
 		data, err := CommandsFS.ReadFile(src)
 		if err != nil {
