@@ -136,12 +136,15 @@ func TestDoctorHealthy(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, ".claude", "commands"), 0755)
 	os.WriteFile(filepath.Join(home, ".claude", "commands", "handoff.md"), []byte("test"), 0644)
 	os.WriteFile(filepath.Join(home, ".claude", "commands", "handin.md"), []byte("test"), 0644)
+	// Write MCP config with bifrost entry
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "mcp.json"), []byte(`{"mcpServers":{"bifrost":{"command":"bifrost","args":["mcp-serve"]}}}`), 0644)
 	os.MkdirAll(filepath.Join(home, ".git"), 0755)
 	os.WriteFile(filepath.Join(home, ".gitignore"), []byte(".bifrost/\n"), 0644)
 
 	// Write a snapshot
 	snap := &snapshot.Snapshot{
-		BifrostVersion: 1,
+		BifrostVersion: snapshot.CurrentVersion,
 		Timestamp:      time.Now().UTC().Truncate(time.Second),
 		SourceTool:     "claude-code",
 		Project:        "test",
@@ -204,7 +207,7 @@ func TestStatusWithSnapshot(t *testing.T) {
 	os.WriteFile(filepath.Join(home, "BIFROST.md"), []byte("---\nproject: test\n---\n"), 0644)
 
 	snap := &snapshot.Snapshot{
-		BifrostVersion: 1,
+		BifrostVersion: snapshot.CurrentVersion,
 		Timestamp:      time.Now().UTC().Truncate(time.Second),
 		SourceTool:     "claude-code",
 		Project:        "test",
@@ -224,6 +227,36 @@ func TestStatusWithSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(out, "claude-code") {
 		t.Errorf("expected source tool in output, got:\n%s", out)
+	}
+}
+
+func TestStatusShowsSemanticFields(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "high",
+		SessionIntent:  "implementing",
+		ActivePlanName: "auth-refactor",
+		OpenQuestions:  []string{"- Q1?", "- Q2?"},
+		CurrentTask:    "build auth",
+		NextStep:       "write tests",
+	}
+	snapshot.Write(home, snap)
+
+	out, _, code := runBifrost(t, home, "status", "--project", home)
+	if code != 0 {
+		t.Fatalf("status failed (exit %d): %s", code, out)
+	}
+
+	for _, want := range []string{"implementing", "auth-refactor", "2 unresolved"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q\ngot:\n%s", want, out)
+		}
 	}
 }
 
@@ -390,5 +423,114 @@ func TestRestoreInvalidNumber(t *testing.T) {
 	_, _, code := runBifrost(t, home, "restore", "abc", "--project", home)
 	if code == 0 {
 		t.Error("expected non-zero exit for invalid restore number")
+	}
+}
+
+// --- Export command tests ---
+
+func TestExportSnapshotJSON(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "medium",
+		SessionIntent:  "implementing",
+		ActivePlanName: "auth-refactor",
+		CurrentTask:    "Build JWT refresh",
+		NextStep:       "Write tests",
+		Assumptions:    []string{"- Redis is running"},
+		OpenQuestions:  []string{"- Single-use tokens?"},
+		Risks:          []string{"- Revocation not done"},
+		ActiveFiles: []snapshot.ActiveFile{
+			{Path: "src/auth.ts", Note: "stub written", Confidence: "medium"},
+		},
+	}
+	if err := snapshot.Write(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, code := runBifrost(t, home, "export", "--format", "snapshot", "--project", home)
+	if code != 0 {
+		t.Fatalf("export exited %d", code)
+	}
+
+	for _, want := range []string{
+		`"session_intent": "implementing"`,
+		`"active_plan_name": "auth-refactor"`,
+		`"confidence": "medium"`,
+		`"assumptions"`,
+		`"open_questions"`,
+		`"risks"`,
+		`"found": true`,
+		`"age_seconds"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("export output missing %q", want)
+		}
+	}
+}
+
+func TestExportPlansJSON(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	plan := &snapshot.Plan{
+		BifrostVersion: 1,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		Status:         "active",
+		Title:          "Auth Refactor",
+		Goal:           "Rotate JWT tokens",
+		Steps: []snapshot.PlanStep{
+			{Description: "Set up Redis", Status: "done"},
+			{Description: "Write refresh logic", Status: "pending"},
+		},
+	}
+	if err := snapshot.WritePlan(home, "auth-refactor", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, code := runBifrost(t, home, "export", "--format", "plans", "--project", home)
+	if code != 0 {
+		t.Fatalf("export plans exited %d", code)
+	}
+
+	for _, want := range []string{
+		`"plans"`,
+		`"Auth Refactor"`,
+		`"completion_pct"`,
+		`"id"`,
+		`"steps_done"`,
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("export plans output missing %q", want)
+		}
+	}
+}
+
+func TestExportNoSnapshot(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	// No snapshot written — should warn but exit 0
+	_, _, code := runBifrost(t, home, "export", "--format", "snapshot", "--project", home)
+	if code != 0 {
+		t.Errorf("export with no snapshot should exit 0, got %d", code)
+	}
+}
+
+func TestExportInvalidFormat(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	_, _, code := runBifrost(t, home, "export", "--format", "invalid", "--project", home)
+	if code == 0 {
+		t.Error("export with invalid format should exit non-zero")
 	}
 }

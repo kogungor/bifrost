@@ -47,6 +47,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	age := formatAge(snap.Timestamp)
 	ui.Section("Snapshot", fmt.Sprintf(".bifrost/session.md  (%s)", age))
+	if snap.SessionIntent != "" {
+		ui.Section("Intent", snap.SessionIntent)
+	}
+	if snap.ActivePlanName != "" {
+		ui.Section("Active plan", snap.ActivePlanName)
+	}
+	if len(snap.OpenQuestions) > 0 {
+		ui.Section("Open questions", fmt.Sprintf("%d unresolved", len(snap.OpenQuestions)))
+	}
 
 	// Handoff note
 	notePath := filepath.Join(root, ".bifrost", "handoff.md")

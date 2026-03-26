@@ -975,3 +975,237 @@ func TestPlanTimestampPreservation(t *testing.T) {
 		t.Errorf("created_at changed after update: %v -> %v", originalCreatedAt, plan["created_at"])
 	}
 }
+
+func TestWriteSnapshotWithSemanticFields(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":      "claude-code",
+				"current_task":     "Implement refresh token rotation",
+				"session_intent":   "implementing",
+				"active_plan_name": "auth-refactor",
+				"assumptions":      []string{"- Redis is on localhost:6379"},
+				"open_questions":   []string{"- Should tokens be single-use?"},
+				"risks":            []string{"- Revocation list not yet built"},
+				"active_files": []map[string]string{
+					{"path": "src/auth.ts", "note": "stub written", "confidence": "medium"},
+				},
+				"next_step": "Write tests",
+			},
+		}),
+	)
+
+	if len(resps) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(resps))
+	}
+	result := resps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+	if data["ok"] != true {
+		t.Errorf("expected ok=true, got %v", data)
+	}
+}
+
+func TestReadSnapshotExposesSemanticFields(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write
+	runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":      "claude-code",
+				"current_task":     "Task",
+				"session_intent":   "debugging",
+				"active_plan_name": "my-plan",
+				"assumptions":      []string{"- Assumption one"},
+				"open_questions":   []string{"- Question one", "- Question two"},
+				"risks":            []string{"- Risk one"},
+				"active_files": []map[string]string{
+					{"path": "src/main.go", "note": "entry point", "confidence": "high"},
+				},
+			},
+		}),
+	)
+
+	// Read
+	resps := runServer(t, dir,
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_read_snapshot",
+		}),
+	)
+
+	result := resps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+
+	snap := data["snapshot"].(map[string]any)
+
+	if snap["session_intent"] != "debugging" {
+		t.Errorf("session_intent: expected debugging, got %v", snap["session_intent"])
+	}
+	if snap["active_plan_name"] != "my-plan" {
+		t.Errorf("active_plan_name: expected my-plan, got %v", snap["active_plan_name"])
+	}
+	assumptions, _ := snap["assumptions"].([]any)
+	if len(assumptions) != 1 {
+		t.Errorf("assumptions: expected 1, got %d", len(assumptions))
+	}
+	openQ, _ := snap["open_questions"].([]any)
+	if len(openQ) != 2 {
+		t.Errorf("open_questions: expected 2, got %d", len(openQ))
+	}
+	risks, _ := snap["risks"].([]any)
+	if len(risks) != 1 {
+		t.Errorf("risks: expected 1, got %d", len(risks))
+	}
+	files, _ := snap["active_files"].([]any)
+	if len(files) != 1 {
+		t.Fatalf("active_files: expected 1, got %d", len(files))
+	}
+	file := files[0].(map[string]any)
+	if file["confidence"] != "high" {
+		t.Errorf("confidence: expected high, got %v", file["confidence"])
+	}
+}
+
+func TestInvalidSessionIntentRejected(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":    "claude-code",
+				"current_task":   "Task",
+				"session_intent": "hacking", // invalid
+			},
+		}),
+	)
+
+	resp := resps[0]
+	if resp["error"] == nil {
+		t.Error("expected error for invalid session_intent, got none")
+	}
+}
+
+func TestStatusIncludesSemanticFields(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write snapshot with session_intent and open_questions
+	runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":      "claude-code",
+				"current_task":     "Task",
+				"session_intent":   "planning",
+				"active_plan_name": "my-plan",
+				"open_questions":   []string{"- Q1", "- Q2"},
+			},
+		}),
+	)
+
+	resps := runServer(t, dir,
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_status",
+		}),
+	)
+
+	result := resps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+
+	if data["session_intent"] != "planning" {
+		t.Errorf("session_intent: expected planning, got %v", data["session_intent"])
+	}
+	if data["active_plan"] != "my-plan" {
+		t.Errorf("active_plan: expected my-plan, got %v", data["active_plan"])
+	}
+	oqCount, _ := data["open_question_count"].(float64)
+	if int(oqCount) != 2 {
+		t.Errorf("open_question_count: expected 2, got %v", data["open_question_count"])
+	}
+}
+
+func TestPlanStepIDsInReadPlan(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a plan
+	runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"title":       "ID Test Plan",
+				"steps": []map[string]any{
+					{"description": "Step one"},
+					{"description": "Step two"},
+				},
+			},
+		}),
+	)
+
+	// Read back
+	resps := runServer(t, dir,
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_read_plan",
+		}),
+	)
+
+	result := resps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+
+	plan := data["plan"].(map[string]any)
+	steps := plan["steps"].([]any)
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(steps))
+	}
+
+	step0 := steps[0].(map[string]any)
+	step1 := steps[1].(map[string]any)
+
+	if step0["id"] == "" || step0["id"] == nil {
+		t.Error("expected step 0 to have an id")
+	}
+	if step1["id"] == "" || step1["id"] == nil {
+		t.Error("expected step 1 to have an id")
+	}
+	if step0["id"] == step1["id"] {
+		t.Error("expected different ids for different steps")
+	}
+}
+
+func TestInvalidConfidenceRejected(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "claude-code",
+				"current_task": "Task",
+				"active_files": []map[string]any{
+					{"path": "src/auth.ts", "note": "stub", "confidence": "very-high"}, // invalid
+				},
+			},
+		}),
+	)
+
+	resp := resps[0]
+	if resp["error"] == nil {
+		t.Error("expected error for invalid confidence value, got none")
+	}
+}
