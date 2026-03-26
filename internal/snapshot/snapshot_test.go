@@ -282,6 +282,137 @@ func TestHistorySortedNewestFirst(t *testing.T) {
 	}
 }
 
+func TestNewSemanticFieldsRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	original := &Snapshot{
+		BifrostVersion: 2,
+		Timestamp:      now,
+		SourceTool:     "claude-code",
+		Project:        "test-project",
+		TokenPressure:  "high",
+		SessionIntent:  "implementing",
+		ActivePlanName: "auth-refactor",
+		GitSHA:         "abc1234def567890",
+		SessionStart:   "2025-03-21T12:00:00Z",
+		CurrentTask:    "Implement refresh token rotation",
+		NextStep:       "Write tests for validateToken()",
+		Assumptions:    []string{"- Redis is on localhost:6379"},
+		OpenQuestions:  []string{"- Should tokens be single-use?"},
+		Risks:          []string{"- Token revocation list not yet built"},
+		ActiveFiles: []ActiveFile{
+			{Path: "src/auth.ts", Note: "stub written", Confidence: "medium"},
+			{Path: "src/tokens.ts", Note: "new file", Confidence: "low"},
+		},
+	}
+
+	if err := Write(tmp, original); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := Read(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if read.SessionIntent != "implementing" {
+		t.Errorf("session_intent: expected %q, got %q", "implementing", read.SessionIntent)
+	}
+	if read.ActivePlanName != "auth-refactor" {
+		t.Errorf("active_plan_name: expected %q, got %q", "auth-refactor", read.ActivePlanName)
+	}
+	if read.GitSHA != "abc1234def567890" {
+		t.Errorf("git_sha: expected %q, got %q", "abc1234def567890", read.GitSHA)
+	}
+	if read.SessionStart != "2025-03-21T12:00:00Z" {
+		t.Errorf("session_start: expected %q, got %q", "2025-03-21T12:00:00Z", read.SessionStart)
+	}
+	if len(read.Assumptions) != 1 {
+		t.Errorf("assumptions: expected 1, got %d", len(read.Assumptions))
+	}
+	if len(read.OpenQuestions) != 1 {
+		t.Errorf("open_questions: expected 1, got %d", len(read.OpenQuestions))
+	}
+	if len(read.Risks) != 1 {
+		t.Errorf("risks: expected 1, got %d", len(read.Risks))
+	}
+	if len(read.ActiveFiles) != 2 {
+		t.Fatalf("active_files: expected 2, got %d", len(read.ActiveFiles))
+	}
+	if read.ActiveFiles[0].Confidence != "medium" {
+		t.Errorf("confidence[0]: expected %q, got %q", "medium", read.ActiveFiles[0].Confidence)
+	}
+	if read.ActiveFiles[1].Confidence != "low" {
+		t.Errorf("confidence[1]: expected %q, got %q", "low", read.ActiveFiles[1].Confidence)
+	}
+}
+
+func TestNewFieldsAbsentInV1SnapshotParsesCleanly(t *testing.T) {
+	// v1 snapshot has no new fields — should parse without error and leave them empty
+	s, err := Parse([]byte(validSnapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.SessionIntent != "" {
+		t.Errorf("expected empty session_intent, got %q", s.SessionIntent)
+	}
+	if s.ActivePlanName != "" {
+		t.Errorf("expected empty active_plan_name, got %q", s.ActivePlanName)
+	}
+	if s.GitSHA != "" {
+		t.Errorf("expected empty git_sha, got %q", s.GitSHA)
+	}
+	if len(s.Assumptions) != 0 {
+		t.Errorf("expected empty assumptions, got %d", len(s.Assumptions))
+	}
+	if len(s.OpenQuestions) != 0 {
+		t.Errorf("expected empty open_questions, got %d", len(s.OpenQuestions))
+	}
+	if len(s.Risks) != 0 {
+		t.Errorf("expected empty risks, got %d", len(s.Risks))
+	}
+}
+
+func TestActiveFileConfidenceRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	original := &Snapshot{
+		BifrostVersion: 2,
+		Timestamp:      now,
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "task",
+		NextStep:       "next",
+		ActiveFiles: []ActiveFile{
+			{Path: "a.go", Note: "done", Confidence: "high"},
+			{Path: "b.go", Note: "partial"},             // no confidence
+			{Path: "c.go", Note: "stub", Confidence: "low"},
+		},
+	}
+
+	if err := Write(tmp, original); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := Read(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if read.ActiveFiles[0].Confidence != "high" {
+		t.Errorf("expected high, got %q", read.ActiveFiles[0].Confidence)
+	}
+	if read.ActiveFiles[1].Confidence != "" {
+		t.Errorf("expected empty confidence, got %q", read.ActiveFiles[1].Confidence)
+	}
+	if read.ActiveFiles[2].Confidence != "low" {
+		t.Errorf("expected low, got %q", read.ActiveFiles[2].Confidence)
+	}
+}
+
 func TestRestoreRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	base := time.Date(2025, 3, 20, 10, 0, 0, 0, time.UTC)

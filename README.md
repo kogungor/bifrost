@@ -17,7 +17,9 @@ You're deep in a session with Claude Code. The context window or credit is nearl
 
 The session ends. You open OpenCode — or start a fresh Claude Code session. You explain everything again from scratch.
 
-Bifrost solves this. Session context transfers between AI coding tools the same way a terminal session transfers between machines — seamlessly, without manual work.
+But there's a subtler problem too. Even when you do carry context forward manually, the next AI has no signal for what to trust. It doesn't know which files were fully implemented vs. still stubs. It doesn't know which assumptions were verified vs. guessed. It doesn't know whether to plan or implement. It proceeds as if everything is settled — and confidently builds on things that were never confirmed.
+
+Bifrost solves both. Session context — and the confidence behind it — transfers between AI coding tools the same way a terminal session transfers between machines: seamlessly, without manual work.
 
 ## How It Works
 
@@ -34,12 +36,14 @@ Claude Code                              OpenCode
 └──────────────┘                        └──────────────┘
 ```
 
-1. Type `/handoff` — the AI captures your current task, status, active files, decisions, environment notes, and next step into `.bifrost/session.md`
+1. Type `/handoff` — the AI captures your current task, status, active files (with confidence), decisions, environment notes, next step, session intent, assumptions, open questions, and risks into `.bifrost/session.md`
 2. Switch tools
 3. Type `/handin` — the AI reads the snapshot and presents a structured briefing
-4. Continue working with zero context loss
+4. Continue working — with full context and calibrated trust
 
 ## What Gets Captured
+
+**Session state** — what you were doing:
 
 | Category          | Example                                                                  |
 | ----------------- | ------------------------------------------------------------------------ |
@@ -49,6 +53,16 @@ Claude Code                              OpenCode
 | Decisions         | "Using jsonwebtoken not jose — already installed"                        |
 | Environment notes | `AUTH_SECRET` must be in `.env`, not `.env.local`                        |
 | Next step         | "Write unit tests for validateToken() using pattern from crypto.test.ts" |
+
+**Trust signals** — what tells the next AI what to trust, what to verify first, and what mode to operate in:
+
+| Category       | Example                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| Session intent | `implementing` — plan, implement, debug, or review                |
+| Confidence     | `src/auth.ts` — confidence: medium (stub written, not tested)     |
+| Assumptions    | "Redis is available on localhost:6379" — unverified               |
+| Open questions | "Should refresh tokens be single-use or reusable across devices?" |
+| Risks          | "Token revocation list not yet implemented"                       |
 
 What does **not** get captured: file contents, conversation history, secrets, or generated artifacts. The snapshot is a structured summary of working memory — things in the AI's context that aren't yet in any file.
 
@@ -92,6 +106,14 @@ This installs `/handoff`, `/handin`, `/plan`, and `/review` for all detected AI 
 bifrost install
 ```
 
+To also register Bifrost as an MCP server (recommended — enables richer `/handin` briefings via structured tool calls):
+
+```bash
+bifrost install --mcp
+```
+
+Without `--mcp`, `/handin` falls back to reading `.bifrost/session.md` directly — it still works, but MCP gives it structured access to all fields.
+
 To install for a specific tool only:
 
 ```bash
@@ -109,12 +131,6 @@ To overwrite existing command files (e.g., after an update):
 
 ```bash
 bifrost install --force
-```
-
-To also register Bifrost as an MCP server (exposes snapshot operations as tool calls):
-
-```bash
-bifrost install --mcp
 ```
 
 ### 2. Initialize a Project (optional)
@@ -144,8 +160,10 @@ A healthy output looks like:
   Bifrost Doctor
 
   ✓  Binary               0.1.0
-  ✓  Claude Code          commands registered
-  ✓  OpenCode             commands registered
+  ✓  Claude Code          commands registered  (/path/to/commands)
+  ✓  Claude Code          MCP server registered
+  ✓  OpenCode             commands registered  (/path/to/commands)
+  ✓  OpenCode             MCP server registered
   ✓  Project              BIFROST.md found
   ✓  Snapshot             22 minutes old
   ✓  Gitignore            .bifrost/ excluded
@@ -199,6 +217,8 @@ The AI reads the snapshot and presents a briefing:
   Project    my-api
   From       claude-code
   Captured   22 minutes ago
+  Commit     18270bac
+  Intent     implementing
   Pressure   high (previous session was near context limit)
 
   Task
@@ -210,8 +230,8 @@ The AI reads the snapshot and presents a briefing:
   - [ ] revokeToken()
 
   Active files
-  - src/auth.ts — middleware stubbed, not wired
-  - src/tokens.ts — new file, refresh logic
+  - src/auth.ts — middleware stubbed, not wired (confidence: medium)
+  - src/tokens.ts — new file, refresh logic (confidence: low)
 
   Key decisions
   - Using jsonwebtoken not jose: already installed
@@ -224,7 +244,23 @@ The AI reads the snapshot and presents a briefing:
   Next step
   Write unit tests for validateToken() using pattern
   from crypto.test.ts. Focus on the expiry edge case.
+
+  Assumptions (not verified)
+  - Redis is available on localhost:6379
+  - AUTH_SECRET is already set in .env
+
+  Risks
+  - Token revocation list not yet implemented
   ─────────────────────────────────────────
+
+  Active plan   auth-refactor
+  Status        active
+  Progress      40% (2/5 steps done)
+  Next step     Write unit tests for validateToken()
+  ─────────────────────────────────────────
+
+  Open questions — address these before starting:
+  - Should refresh tokens be single-use or reusable across devices?
 
   Ready to continue from here. Any adjustments before we start?
 ```
@@ -320,6 +356,7 @@ REST API for the mobile app. Currently in beta.
 | `bifrost install --mcp`      | Also register Bifrost as an MCP server        |
 | `bifrost init`               | Initialize Bifrost in the current project     |
 | `bifrost status`             | Show the current bridge state                 |
+| `bifrost export`             | Export snapshot and/or plans as JSON to stdout |
 | `bifrost doctor`             | Diagnose installation and configuration       |
 | `bifrost history`            | List archived snapshots                       |
 | `bifrost restore <n>`        | Restore a historical snapshot                 |
@@ -334,6 +371,16 @@ REST API for the mobile app. Currently in beta.
 | `--no-color`       | Disable color output                 |
 | `--quiet`          | Print only errors                    |
 | `--project <path>` | Override project root auto-detection |
+
+### Exporting State
+
+Export the current snapshot and/or plans as JSON — useful for CI pipelines and scripts:
+
+```bash
+bifrost export                    # snapshot JSON (default)
+bifrost export --format plans     # all plans as JSON
+bifrost export --format all       # snapshot + plans
+```
 
 ### Snapshot History
 
@@ -393,10 +440,10 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 
 | Tool                     | Description                                    |
 | ------------------------ | ---------------------------------------------- |
-| `bifrost_read_snapshot`  | Read the current session snapshot              |
-| `bifrost_write_snapshot` | Write a new snapshot (auto-archives previous)  |
+| `bifrost_read_snapshot`  | Read the current session snapshot (returns all fields including semantic enrichments) |
+| `bifrost_write_snapshot` | Write a new snapshot — accepts session intent, assumptions, open questions, risks, confidence on files, and active plan name; auto-collects git SHA |
 | `bifrost_write_note`     | Write a freeform handoff note                  |
-| `bifrost_status`         | Quick status: snapshot age, history count, plan count |
+| `bifrost_status`         | Quick status: snapshot age, session intent, active plan, open question count, history count |
 
 ### Plan Tools
 

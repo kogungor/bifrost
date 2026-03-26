@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,9 +40,15 @@ type Plan struct {
 
 // PlanStep represents a single step in a plan.
 type PlanStep struct {
+	ID          string // stable short hash, assigned on creation, never changes on reorder
 	Description string
 	Status      string // "pending", "done", "blocked"
 	Files       []string
+}
+
+// GenerateStepID creates a stable 8-hex-character ID from the step description and plan creation time.
+func GenerateStepID(description string, createdAt time.Time) string {
+	return fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(description+createdAt.UTC().Format(time.RFC3339))))
 }
 
 // ReviewNote represents an inline review observation.
@@ -148,6 +155,13 @@ func WritePlan(projectRoot, name string, p *Plan) error {
 		return fmt.Errorf("acquire plan lock: %w", err)
 	}
 	defer unlock()
+
+	// Ensure every step has a stable ID before writing
+	for i := range p.Steps {
+		if p.Steps[i].ID == "" {
+			p.Steps[i].ID = GenerateStepID(p.Steps[i].Description, p.CreatedAt)
+		}
+	}
 
 	data := RenderPlan(p)
 
@@ -288,6 +302,9 @@ func RenderPlan(p *Plan) string {
 			default:
 				b.WriteString(fmt.Sprintf("- [ ] %s\n", step.Description))
 			}
+			if step.ID != "" {
+				b.WriteString(fmt.Sprintf("  - id: %s\n", step.ID))
+			}
 			for _, f := range step.Files {
 				b.WriteString(fmt.Sprintf("  - `%s`\n", f))
 			}
@@ -381,10 +398,13 @@ func parsePlanSteps(section string) []PlanStep {
 			Status:      status,
 		}
 
-		// Collect file sub-items: lines like "  - `path`"
+		// Collect sub-items: id line and file paths
 		for i+1 < len(lines) {
 			nextLine := strings.TrimSpace(lines[i+1])
-			if strings.HasPrefix(nextLine, "- `") && strings.HasSuffix(nextLine, "`") {
+			if strings.HasPrefix(nextLine, "- id: ") {
+				step.ID = strings.TrimPrefix(nextLine, "- id: ")
+				i++
+			} else if strings.HasPrefix(nextLine, "- `") && strings.HasSuffix(nextLine, "`") {
 				filePath := nextLine[3 : len(nextLine)-1] // strip "- `" and trailing "`"
 				step.Files = append(step.Files, filePath)
 				i++
