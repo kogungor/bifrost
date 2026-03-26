@@ -19,7 +19,7 @@ go test ./...
 ```
 cmd/bifrost/           Entry point, embeds slash command files
 internal/
-  cli/                 Cobra commands (install, init, doctor, status, history, etc.)
+  cli/                 Cobra commands (install, init, doctor, status, export, history, etc.)
   snapshot/            Snapshot read/write/parse/archive logic + plan management
   project/             Project root detection, .gitignore management
   adapters/            AI tool adapters (Claude Code, OpenCode)
