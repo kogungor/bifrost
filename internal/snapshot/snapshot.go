@@ -12,6 +12,9 @@ import (
 // ErrNoSnapshot is returned when no snapshot file exists.
 var ErrNoSnapshot = errors.New("no snapshot found")
 
+// CurrentVersion is the current Bifrost snapshot format version.
+const CurrentVersion = 2
+
 // Snapshot represents a session context snapshot.
 type Snapshot struct {
 	BifrostVersion int       `yaml:"bifrost_version"`
@@ -20,18 +23,28 @@ type Snapshot struct {
 	Project        string    `yaml:"project"`
 	TokenPressure  string    `yaml:"token_pressure"`
 
-	CurrentTask string
-	Status      []string
-	ActiveFiles []ActiveFile
-	Decisions   []string
-	EnvNotes    []string
-	NextStep    string
+	// Session metadata (optional)
+	SessionIntent  string // "planning" | "implementing" | "debugging" | "reviewing"
+	ActivePlanName string // name of the plan currently being executed
+	GitSHA         string // git HEAD SHA at snapshot time
+	SessionStart   string // RFC3339 of when the session began
+
+	CurrentTask   string
+	Status        []string
+	ActiveFiles   []ActiveFile
+	Decisions     []string
+	EnvNotes      []string
+	NextStep      string
+	Assumptions   []string // things the AI assumed but isn't certain about
+	OpenQuestions []string // unresolved questions for the incoming tool to address
+	Risks         []string // known risks or blockers
 }
 
 // ActiveFile represents a file touched during the session.
 type ActiveFile struct {
-	Path string
-	Note string
+	Path       string
+	Note       string
+	Confidence string // "high" | "medium" | "low" — optional
 }
 
 const bifrostDir = ".bifrost"

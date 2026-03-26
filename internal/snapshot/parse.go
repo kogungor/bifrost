@@ -15,6 +15,10 @@ type frontmatter struct {
 	SourceTool     string `yaml:"source_tool"`
 	Project        string `yaml:"project"`
 	TokenPressure  string `yaml:"token_pressure"`
+	SessionIntent  string `yaml:"session_intent,omitempty"`
+	ActivePlanName string `yaml:"active_plan_name,omitempty"`
+	GitSHA         string `yaml:"git_sha,omitempty"`
+	SessionStart   string `yaml:"session_start,omitempty"`
 }
 
 // Parse parses a snapshot from raw markdown bytes.
@@ -39,6 +43,10 @@ func Parse(data []byte) (*Snapshot, error) {
 		SourceTool:     fm.SourceTool,
 		Project:        fm.Project,
 		TokenPressure:  fm.TokenPressure,
+		SessionIntent:  fm.SessionIntent,
+		ActivePlanName: fm.ActivePlanName,
+		GitSHA:         fm.GitSHA,
+		SessionStart:   fm.SessionStart,
 	}
 
 	// Parse markdown sections
@@ -50,6 +58,9 @@ func Parse(data []byte) (*Snapshot, error) {
 	s.Decisions = parseList(sections["Decisions Made"])
 	s.EnvNotes = parseList(sections["Environment Notes"])
 	s.NextStep = strings.TrimSpace(sections["Next Step"])
+	s.Assumptions = parseList(sections["Assumptions"])
+	s.OpenQuestions = parseList(sections["Open Questions"])
+	s.Risks = parseList(sections["Risks"])
 
 	return s, nil
 }
@@ -65,6 +76,18 @@ func Render(s *Snapshot) string {
 	b.WriteString(fmt.Sprintf("source_tool: %s\n", s.SourceTool))
 	b.WriteString(fmt.Sprintf("project: %s\n", s.Project))
 	b.WriteString(fmt.Sprintf("token_pressure: %s\n", s.TokenPressure))
+	if s.SessionIntent != "" {
+		b.WriteString(fmt.Sprintf("session_intent: %s\n", s.SessionIntent))
+	}
+	if s.ActivePlanName != "" {
+		b.WriteString(fmt.Sprintf("active_plan_name: %s\n", s.ActivePlanName))
+	}
+	if s.GitSHA != "" {
+		b.WriteString(fmt.Sprintf("git_sha: %s\n", s.GitSHA))
+	}
+	if s.SessionStart != "" {
+		b.WriteString(fmt.Sprintf("session_start: %s\n", s.SessionStart))
+	}
 	b.WriteString("---\n\n")
 
 	// Body
@@ -88,7 +111,11 @@ func Render(s *Snapshot) string {
 		b.WriteString("Nothing to note.\n")
 	} else {
 		for _, f := range s.ActiveFiles {
-			b.WriteString(fmt.Sprintf("- `%s` — %s\n", f.Path, f.Note))
+			if f.Confidence != "" {
+				b.WriteString(fmt.Sprintf("- `%s` — %s [confidence: %s]\n", f.Path, f.Note, f.Confidence))
+			} else {
+				b.WriteString(fmt.Sprintf("- `%s` — %s\n", f.Path, f.Note))
+			}
 		}
 	}
 	b.WriteString("\n")
@@ -115,6 +142,27 @@ func Render(s *Snapshot) string {
 
 	b.WriteString("## Next Step\n")
 	b.WriteString(s.NextStep + "\n")
+
+	if len(s.Assumptions) > 0 {
+		b.WriteString("\n## Assumptions\n")
+		for _, a := range s.Assumptions {
+			b.WriteString(a + "\n")
+		}
+	}
+
+	if len(s.OpenQuestions) > 0 {
+		b.WriteString("\n## Open Questions\n")
+		for _, q := range s.OpenQuestions {
+			b.WriteString(q + "\n")
+		}
+	}
+
+	if len(s.Risks) > 0 {
+		b.WriteString("\n## Risks\n")
+		for _, r := range s.Risks {
+			b.WriteString(r + "\n")
+		}
+	}
 
 	return b.String()
 }
@@ -213,7 +261,19 @@ func parseActiveFiles(section string) []ActiveFile {
 		} else if strings.HasPrefix(after, " - ") {
 			note = strings.TrimPrefix(after, " - ")
 		}
-		files = append(files, ActiveFile{Path: path, Note: note})
+
+		// Extract optional [confidence: X] suffix
+		confidence := ""
+		const confPrefix = " [confidence: "
+		if ci := strings.Index(note, confPrefix); ci >= 0 {
+			suffix := note[ci+len(confPrefix):]
+			if ei := strings.Index(suffix, "]"); ei >= 0 {
+				confidence = suffix[:ei]
+				note = note[:ci]
+			}
+		}
+
+		files = append(files, ActiveFile{Path: path, Note: note, Confidence: confidence})
 	}
 	return files
 }

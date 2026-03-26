@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -41,7 +43,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        "bifrost_read_snapshot",
-			Description: "Read the current Bifrost session snapshot for this project. Returns the full snapshot including task status, active files, decisions, and handoff notes.",
+			Description: "Read the current Bifrost session snapshot. Returns all fields: task, status, active files (with confidence), decisions, environment notes, next step, session intent, active plan name, git SHA, assumptions, open questions, risks, and handoff note.",
 			InputSchema: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -49,7 +51,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 		},
 		{
 			Name:        "bifrost_write_snapshot",
-			Description: "Write a new Bifrost session snapshot. Automatically archives the previous snapshot, fills in timestamp and project name.",
+			Description: "Write a new Bifrost session snapshot. Archives the previous snapshot automatically, fills in timestamp, project name, and git SHA. Accepts semantic enrichments: session_intent (planning|implementing|debugging|reviewing), assumptions, open_questions, risks, active_plan_name, and confidence on each active file.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -78,6 +80,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 							"properties": map[string]any{
 								"path": map[string]any{"type": "string"},
 								"note": map[string]any{"type": "string"},
+								"confidence": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}, "description": "How certain the AI is about the file's state"},
 							},
 							"required": []string{"path"},
 						},
@@ -96,6 +99,34 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 					"next_step": map[string]any{
 						"type":        "string",
 						"description": "What should be done next",
+					},
+					"session_intent": map[string]any{
+						"type":        "string",
+						"enum":        []string{"planning", "implementing", "debugging", "reviewing"},
+						"description": "What mode the session was in — helps the incoming tool resume correctly",
+					},
+					"active_plan_name": map[string]any{
+						"type":        "string",
+						"description": "Name of the plan being executed (maps to .bifrost/<name>.plan.md)",
+					},
+					"session_start": map[string]any{
+						"type":        "string",
+						"description": "RFC3339 timestamp of when this session began",
+					},
+					"assumptions": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Things the AI assumed but isn't certain about — surfaces trust signals for the incoming tool",
+					},
+					"open_questions": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Unresolved questions the incoming tool should address before proceeding",
+					},
+					"risks": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Known risks or blockers the incoming tool should be aware of",
 					},
 				},
 				"required": []string{"source_tool", "current_task"},
@@ -121,7 +152,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 		},
 		{
 			Name:        "bifrost_status",
-			Description: "Get a quick status summary: snapshot existence, age, project name, handoff note presence, and history count.",
+			Description: "Get a quick status summary: snapshot existence, age, project name, session intent, active plan name, open question count, handoff note presence, history count, and plan count.",
 			InputSchema: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -277,6 +308,18 @@ func (ts *ToolSet) Call(name string, args json.RawMessage) (any, error) {
 	}
 }
 
+// collectGitSHA returns the current HEAD SHA of the repository at dir.
+// Returns an empty string if git is unavailable or the directory is not a repo.
+func collectGitSHA(dir string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (ts *ToolSet) readSnapshot() (any, error) {
 	snap, err := snapshot.Read(ts.projectRoot)
 	if err != nil {
@@ -294,7 +337,7 @@ func (ts *ToolSet) readSnapshot() (any, error) {
 
 	activeFiles := make([]map[string]string, len(snap.ActiveFiles))
 	for i, f := range snap.ActiveFiles {
-		activeFiles[i] = map[string]string{"path": f.Path, "note": f.Note}
+		activeFiles[i] = map[string]string{"path": f.Path, "note": f.Note, "confidence": f.Confidence}
 	}
 
 	result := map[string]any{
@@ -306,12 +349,19 @@ func (ts *ToolSet) readSnapshot() (any, error) {
 			"source_tool":       snap.SourceTool,
 			"project":           snap.Project,
 			"token_pressure":    snap.TokenPressure,
+			"session_intent":    snap.SessionIntent,
+			"active_plan_name":  snap.ActivePlanName,
+			"git_sha":           snap.GitSHA,
+			"session_start":     snap.SessionStart,
 			"current_task":      snap.CurrentTask,
 			"status":            snap.Status,
 			"active_files":      activeFiles,
 			"decisions":         snap.Decisions,
 			"environment_notes": snap.EnvNotes,
 			"next_step":         snap.NextStep,
+			"assumptions":       snap.Assumptions,
+			"open_questions":    snap.OpenQuestions,
+			"risks":             snap.Risks,
 		},
 	}
 
@@ -322,19 +372,36 @@ func (ts *ToolSet) readSnapshot() (any, error) {
 	return result, nil
 }
 
+// validSessionIntents is the set of allowed session_intent values.
+var validSessionIntents = map[string]bool{
+	"planning": true, "implementing": true, "debugging": true, "reviewing": true,
+}
+
+// validConfidences is the set of allowed confidence values on active files.
+var validConfidences = map[string]bool{
+	"high": true, "medium": true, "low": true,
+}
+
 // writeSnapshotParams maps the JSON input for bifrost_write_snapshot.
 type writeSnapshotParams struct {
-	SourceTool    string `json:"source_tool"`
-	TokenPressure string `json:"token_pressure"`
-	CurrentTask   string `json:"current_task"`
-	Status        []string `json:"status"`
-	ActiveFiles   []struct {
-		Path string `json:"path"`
-		Note string `json:"note"`
+	SourceTool     string `json:"source_tool"`
+	TokenPressure  string `json:"token_pressure"`
+	SessionIntent  string `json:"session_intent"`
+	ActivePlanName string `json:"active_plan_name"`
+	SessionStart   string `json:"session_start"`
+	CurrentTask    string `json:"current_task"`
+	Status         []string `json:"status"`
+	ActiveFiles    []struct {
+		Path       string `json:"path"`
+		Note       string `json:"note"`
+		Confidence string `json:"confidence"`
 	} `json:"active_files"`
-	Decisions  []string `json:"decisions"`
-	EnvNotes   []string `json:"environment_notes"`
-	NextStep   string   `json:"next_step"`
+	Decisions     []string `json:"decisions"`
+	EnvNotes      []string `json:"environment_notes"`
+	NextStep      string   `json:"next_step"`
+	Assumptions   []string `json:"assumptions"`
+	OpenQuestions []string `json:"open_questions"`
+	Risks         []string `json:"risks"`
 }
 
 func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
@@ -358,6 +425,11 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("source_tool exceeds 100 characters")
 	}
 
+	// Validate enum fields
+	if params.SessionIntent != "" && !validSessionIntents[params.SessionIntent] {
+		return nil, fmt.Errorf("invalid session_intent %q: must be planning, implementing, debugging, or reviewing", params.SessionIntent)
+	}
+
 	// Validate array sizes
 	if len(params.Status) > maxArrayItems {
 		return nil, fmt.Errorf("status exceeds %d items", maxArrayItems)
@@ -371,6 +443,15 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 	if len(params.EnvNotes) > maxArrayItems {
 		return nil, fmt.Errorf("environment_notes exceeds %d items", maxArrayItems)
 	}
+	if len(params.Assumptions) > maxArrayItems {
+		return nil, fmt.Errorf("assumptions exceeds %d items", maxArrayItems)
+	}
+	if len(params.OpenQuestions) > maxArrayItems {
+		return nil, fmt.Errorf("open_questions exceeds %d items", maxArrayItems)
+	}
+	if len(params.Risks) > maxArrayItems {
+		return nil, fmt.Errorf("risks exceeds %d items", maxArrayItems)
+	}
 
 	projectName := filepath.Base(ts.projectRoot)
 
@@ -380,21 +461,31 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 		if strings.Contains(f.Path, "..") || filepath.IsAbs(f.Path) {
 			return nil, fmt.Errorf("invalid file path: %s", f.Path)
 		}
-		activeFiles = append(activeFiles, snapshot.ActiveFile{Path: f.Path, Note: f.Note})
+		if f.Confidence != "" && !validConfidences[f.Confidence] {
+			return nil, fmt.Errorf("invalid confidence %q for file %q: must be high, medium, or low", f.Confidence, f.Path)
+		}
+		activeFiles = append(activeFiles, snapshot.ActiveFile{Path: f.Path, Note: f.Note, Confidence: f.Confidence})
 	}
 
 	snap := &snapshot.Snapshot{
-		BifrostVersion: 1,
+		BifrostVersion: snapshot.CurrentVersion,
 		Timestamp:      time.Now().UTC(),
 		SourceTool:     params.SourceTool,
 		Project:        projectName,
 		TokenPressure:  params.TokenPressure,
+		SessionIntent:  params.SessionIntent,
+		ActivePlanName: params.ActivePlanName,
+		SessionStart:   params.SessionStart,
 		CurrentTask:    params.CurrentTask,
 		Status:         params.Status,
 		ActiveFiles:    activeFiles,
 		Decisions:      params.Decisions,
 		EnvNotes:       params.EnvNotes,
 		NextStep:       params.NextStep,
+		Assumptions:    params.Assumptions,
+		OpenQuestions:  params.OpenQuestions,
+		Risks:          params.Risks,
+		GitSHA:         collectGitSHA(ts.projectRoot),
 	}
 
 	if err := snapshot.Write(ts.projectRoot, snap); err != nil {
@@ -457,6 +548,15 @@ func (ts *ToolSet) status() (any, error) {
 	if err == nil {
 		result["has_snapshot"] = true
 		result["age_seconds"] = int(math.Round(snap.Age().Seconds()))
+		if snap.SessionIntent != "" {
+			result["session_intent"] = snap.SessionIntent
+		}
+		if snap.ActivePlanName != "" {
+			result["active_plan"] = snap.ActivePlanName
+		}
+		if len(snap.OpenQuestions) > 0 {
+			result["open_question_count"] = len(snap.OpenQuestions)
+		}
 	}
 
 	note, _ := snapshot.ReadNote(ts.projectRoot)
@@ -508,6 +608,7 @@ func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
 			files = []string{}
 		}
 		steps[i] = map[string]any{
+			"id":          s.ID,
 			"description": s.Description,
 			"status":      s.Status,
 			"files":       files,
@@ -622,7 +723,7 @@ func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
 
 	now := time.Now().UTC()
 	plan := &snapshot.Plan{
-		BifrostVersion: 1,
+		BifrostVersion: snapshot.CurrentVersion,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		SourceTool:     params.SourceTool,
