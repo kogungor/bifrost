@@ -678,3 +678,99 @@ func TestFileLocking(t *testing.T) {
 		t.Errorf("ReadPlan after concurrent writes: %v", err)
 	}
 }
+
+func TestStepIDGeneratedOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2025, 3, 21, 14, 32, 17, 0, time.UTC)
+
+	p := &Plan{
+		BifrostVersion: 2,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     "claude-code",
+		Project:        "test",
+		Status:         PlanStatusDraft,
+		Title:          "Test Plan",
+		Goal:           "Test step IDs.",
+		Steps: []PlanStep{
+			{Description: "First step", Status: "pending"},
+			{Description: "Second step", Status: "pending"},
+		},
+	}
+
+	if err := WritePlan(dir, "test", p); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := ReadPlan(dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(read.Steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(read.Steps))
+	}
+	if read.Steps[0].ID == "" {
+		t.Error("expected step 0 to have an ID after write")
+	}
+	if read.Steps[1].ID == "" {
+		t.Error("expected step 1 to have an ID after write")
+	}
+	if read.Steps[0].ID == read.Steps[1].ID {
+		t.Error("expected different IDs for different steps")
+	}
+}
+
+func TestStepIDPreservedOnUpdate(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2025, 3, 21, 14, 32, 17, 0, time.UTC)
+
+	p := &Plan{
+		BifrostVersion: 2,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     "claude-code",
+		Project:        "test",
+		Status:         PlanStatusDraft,
+		Title:          "Test Plan",
+		Goal:           "Test ID stability.",
+		Steps: []PlanStep{
+			{Description: "Stable step", Status: "pending"},
+		},
+	}
+
+	if err := WritePlan(dir, "stable", p); err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := ReadPlan(dir, "stable")
+	firstID := first.Steps[0].ID
+
+	// Update step status and write again
+	first.Steps[0].Status = "done"
+	if err := WritePlan(dir, "stable", first); err != nil {
+		t.Fatal(err)
+	}
+
+	second, _ := ReadPlan(dir, "stable")
+	if second.Steps[0].ID != firstID {
+		t.Errorf("step ID changed after update: was %q, now %q", firstID, second.Steps[0].ID)
+	}
+}
+
+func TestGenerateStepIDDeterministic(t *testing.T) {
+	now := time.Date(2025, 3, 21, 14, 32, 17, 0, time.UTC)
+	id1 := GenerateStepID("Write unit tests", now)
+	id2 := GenerateStepID("Write unit tests", now)
+	if id1 != id2 {
+		t.Errorf("expected deterministic ID, got %q and %q", id1, id2)
+	}
+	if len(id1) != 8 {
+		t.Errorf("expected 8-char ID, got %d chars: %q", len(id1), id1)
+	}
+	// Different description should produce different ID
+	id3 := GenerateStepID("Write integration tests", now)
+	if id1 == id3 {
+		t.Error("expected different IDs for different descriptions")
+	}
+}
