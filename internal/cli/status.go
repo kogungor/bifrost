@@ -14,6 +14,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the current state of the bridge",
+	Long:  "Shows snapshot age, session intent, active plan, open question count, handoff note, snapshot history count, and project config status.",
 	RunE:  runStatus,
 }
 

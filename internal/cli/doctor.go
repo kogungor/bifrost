@@ -17,6 +17,7 @@ import (
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Diagnose installation and configuration problems",
+	Long:  "Checks binary version, slash command registration, MCP server registration, BIFROST.md presence, snapshot freshness, and .gitignore coverage. Prints warnings for optional items, errors for required ones.",
 	RunE:  runDoctor,
 }
 
