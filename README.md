@@ -17,7 +17,9 @@ You're deep in a session with Claude Code. The context window or credit is nearl
 
 The session ends. You open OpenCode — or start a fresh Claude Code session. You explain everything again from scratch.
 
-Bifrost solves this. Session context transfers between AI coding tools the same way a terminal session transfers between machines — seamlessly, without manual work.
+But there's a subtler problem too. Even when you do carry context forward manually, the next AI has no signal for what to trust. It doesn't know which files were fully implemented vs. still stubs. It doesn't know which assumptions were verified vs. guessed. It doesn't know whether to plan or implement. It proceeds as if everything is settled — and confidently builds on things that were never confirmed.
+
+Bifrost solves both. Session context — and the confidence behind it — transfers between AI coding tools the same way a terminal session transfers between machines: seamlessly, without manual work.
 
 ## How It Works
 
@@ -37,22 +39,30 @@ Claude Code                              OpenCode
 1. Type `/handoff` — the AI captures your current task, status, active files (with confidence), decisions, environment notes, next step, session intent, assumptions, open questions, and risks into `.bifrost/session.md`
 2. Switch tools
 3. Type `/handin` — the AI reads the snapshot and presents a structured briefing
-4. Continue working with zero context loss
+4. Continue working — with full context and calibrated trust
 
 ## What Gets Captured
+
+**Session state** — what you were doing:
 
 | Category          | Example                                                                  |
 | ----------------- | ------------------------------------------------------------------------ |
 | Current task      | "Implement JWT refresh token rotation"                                   |
 | Status            | `[x] validateToken()`, `[ ] refreshToken()`                              |
-| Active files      | `src/auth.ts` — middleware stubbed, not wired (confidence: medium)       |
+| Active files      | `src/auth.ts` — middleware stubbed, not wired                            |
 | Decisions         | "Using jsonwebtoken not jose — already installed"                        |
 | Environment notes | `AUTH_SECRET` must be in `.env`, not `.env.local`                        |
 | Next step         | "Write unit tests for validateToken() using pattern from crypto.test.ts" |
-| Session intent    | `implementing` — tells the next tool what mode to operate in             |
-| Assumptions       | "Redis is available on localhost:6379" — unverified assumptions          |
-| Open questions    | "Should refresh tokens be single-use or reusable across devices?"        |
-| Risks             | "Token revocation list not yet implemented"                              |
+
+**Trust signals** — what tells the next AI what to trust, what to verify first, and what mode to operate in:
+
+| Category       | Example                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| Session intent | `implementing` — plan, implement, debug, or review                |
+| Confidence     | `src/auth.ts` — confidence: medium (stub written, not tested)     |
+| Assumptions    | "Redis is available on localhost:6379" — unverified               |
+| Open questions | "Should refresh tokens be single-use or reusable across devices?" |
+| Risks          | "Token revocation list not yet implemented"                       |
 
 What does **not** get captured: file contents, conversation history, secrets, or generated artifacts. The snapshot is a structured summary of working memory — things in the AI's context that aren't yet in any file.
 
@@ -361,6 +371,16 @@ REST API for the mobile app. Currently in beta.
 | `--no-color`       | Disable color output                 |
 | `--quiet`          | Print only errors                    |
 | `--project <path>` | Override project root auto-detection |
+
+### Exporting State
+
+Export the current snapshot and/or plans as JSON — useful for CI pipelines and scripts:
+
+```bash
+bifrost export                    # snapshot JSON (default)
+bifrost export --format plans     # all plans as JSON
+bifrost export --format all       # snapshot + plans
+```
 
 ### Snapshot History
 
