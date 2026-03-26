@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,6 +61,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			}
 			ui.Error(fmt.Sprintf("%-20s missing: %s", a.DisplayName(), strings.Join(missing, ", ")),
 				"Run 'bifrost install' to register commands.")
+		}
+
+		// MCP check — recommended for /handin (falls back to direct file read without it)
+		mcpPath := a.MCPConfigPath()
+		if mcpPath != "" {
+			if isMCPConfigured(mcpPath) {
+				ui.Success(fmt.Sprintf("%-20s MCP server registered", a.DisplayName()))
+			} else {
+				ui.Warning(fmt.Sprintf("%-20s MCP server not registered (optional — run 'bifrost install --mcp' to enable)", a.DisplayName()))
+			}
 		}
 	}
 
@@ -121,4 +132,22 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// isMCPConfigured returns true if the bifrost MCP server entry exists in the given config file.
+func isMCPConfigured(mcpPath string) bool {
+	data, err := os.ReadFile(mcpPath)
+	if err != nil {
+		return false
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false
+	}
+	servers, ok := config["mcpServers"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, found := servers["bifrost"]
+	return found
 }
