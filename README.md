@@ -280,16 +280,15 @@ The AI creates a structured implementation plan and saves it to `.bifrost/auth-r
 ```
   Plan written to .bifrost/auth-refactor.plan.md
 
-  Title    Auth token refresh refactor
-  Status   draft
-  Steps    5 steps defined (0% complete)
-  Files    8 files referenced
+  Title         Auth token refresh refactor
+  Status        draft
+  Plan version  v1
+  Steps         5 steps defined (0% complete)
+  Files         8 files referenced
 
   Ask another AI tool to run /review to get a critical analysis.
-  Use bifrost_update_plan to change status to "active" when work begins.
+  Consensus required: reviewer must approve before work begins.
 ```
-
-Plans support a full lifecycle: `draft` → `active` → `completed` → `archived`.
 
 ### Reviewing Plans
 
@@ -299,11 +298,53 @@ Switch to another AI tool and type:
 /review auth-refactor
 ```
 
-The AI reads the plan, analyzes it critically (edge cases, security, architecture, missing steps), and adds review notes directly to the plan file. You can also review arbitrary files:
+The reviewer AI analyzes the plan critically (edge cases, security, architecture, missing steps) and submits an explicit outcome:
+
+- **Approved** — plan activates immediately, consensus reached, work can begin
+- **Needs revision** — feedback recorded, plan returned to planner
+
+```
+  Review complete for .bifrost/auth-refactor.plan.md
+
+  Outcome       needs_revision
+  Plan version  v1
+  Revision      0 of 3
+
+  Key findings:
+  - Token revocation not addressed
+  - No rollback strategy for failed migrations
+
+  Planner should run /plan auth-refactor --revise to address feedback.
+```
+
+The planner addresses the feedback and re-submits:
+
+```
+/plan auth-refactor --revise
+```
+
+The reviewer approves in the next round:
+
+```
+  Outcome       approved
+  Consensus     reached
+
+  Plan is now active. Work can begin.
+```
+
+If the review cycle stalls after the maximum number of revisions (default: 3), the planner can override:
+
+```
+/plan auth-refactor --force-accept
+```
+
+You can also review arbitrary files:
 
 ```
 /review docs/rfc-auth.md
 ```
+
+Plans support a full lifecycle: `draft` → `active` → `completed` → `archived`.
 
 ### Snapshot Freshness
 
