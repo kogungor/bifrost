@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased] — v0.8.0
+
+### Added
+
+- **Plan consensus mechanism** — two-party approval flow before a plan becomes active. Reviewer submits `approved` or `needs_revision` via `/review`; planner revises with `/plan --revise`; deadlock auto-detected after `max_revisions` (default 3); force-accept escape hatch via `/plan --force-accept`.
+- **`plan_version` tracking** — increments on every content edit; each review note is tied to the plan version it reviewed. Editing an approved plan automatically resets consensus and returns to draft.
+- **Deadlock detection** — automatic when `revision_count >= max_revisions` with unresolved `needs_revision`. Returns `deadlock_detected: true` and `deadlock_reason` in response.
+- **Reviewer identity** — `source_tool` param on `bifrost_update_plan`; review notes now carry `from`, `at`, `plan_version`, and `outcome`.
+- **`bifrost_list_plans`** — now returns `consensus_state`, `revision_count`, `deadlock_detected`, `latest_review_outcome` per plan.
+- **`bifrost export`** — plan export now includes all consensus fields and enriched review notes.
+
+### Changed
+
+- **`/review` command** — uses `review_outcome: approved | needs_revision` instead of adding raw notes and auto-setting status. Plan activation is driven by consensus, not the reviewer directly.
+- **`/plan` command** — new `--revise` mode (address feedback, increment version) and `--force-accept` mode (override deadlock).
+- **`bifrost_update_plan` MCP tool** — new params: `source_tool`, `review_outcome`, `review_feedback`, `force_accept`, `revise`. JSON schema updated.
+
+---
+
 ## [0.7.0] — 2026-03-26
 
 ### Added

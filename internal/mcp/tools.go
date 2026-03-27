@@ -216,7 +216,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 		},
 		{
 			Name:        "bifrost_update_plan",
-			Description: "Update an existing Bifrost plan: add review notes, update step statuses, edit step descriptions/files, or change plan status.",
+			Description: "Update an existing Bifrost plan: submit a review outcome (approved/needs_revision), revise after feedback, force-accept to override deadlock, update step statuses, or change plan status.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -224,10 +224,31 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 						"type":        "string",
 						"description": "Plan name (defaults to \"plan\")",
 					},
+					"source_tool": map[string]any{
+						"type":        "string",
+						"description": "The AI tool making this update — used as reviewer identity in review notes",
+					},
+					"review_outcome": map[string]any{
+						"type":        "string",
+						"enum":        []string{"approved", "needs_revision"},
+						"description": "Review decision. 'approved' activates the plan (consensus reached). 'needs_revision' records feedback and returns the plan to the planner.",
+					},
+					"review_feedback": map[string]any{
+						"type":        "string",
+						"description": "Detailed review findings. Required when review_outcome is needs_revision. Saved as a review note.",
+					},
+					"force_accept": map[string]any{
+						"type":        "boolean",
+						"description": "Override consensus and activate the plan immediately. Sets consensus_state to overridden. Use when deadlocked.",
+					},
+					"revise": map[string]any{
+						"type":        "boolean",
+						"description": "Signal a deliberate revision in response to review feedback. Increments plan_version and revision_count, resets consensus_state to none.",
+					},
 					"plan_status": map[string]any{
 						"type":        "string",
 						"enum":        []string{"draft", "active", "completed", "archived"},
-						"description": "Update the plan lifecycle status",
+						"description": "Manually update the plan lifecycle status. Ignored when review_outcome or force_accept is set.",
 					},
 					"review_notes": map[string]any{
 						"type": "array",
@@ -239,7 +260,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 							},
 							"required": []string{"from", "text"},
 						},
-						"description": "Review notes to append",
+						"description": "Legacy: append freeform review notes without consensus logic.",
 					},
 					"step_updates": map[string]any{
 						"type": "array",
@@ -248,8 +269,8 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 							"properties": map[string]any{
 								"index":       map[string]any{"type": "integer", "description": "0-based step index"},
 								"status":      map[string]any{"type": "string", "enum": []string{"pending", "done", "blocked"}},
-								"description": map[string]any{"type": "string", "description": "New step description (optional)"},
-								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "New file list (optional, replaces existing)"},
+								"description": map[string]any{"type": "string", "description": "New step description — resets approval if plan was already approved"},
+								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "New file list (replaces existing)"},
 							},
 							"required": []string{"index"},
 						},
@@ -615,11 +636,14 @@ func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
 		}
 	}
 
-	reviewNotes := make([]map[string]string, len(plan.ReviewNotes))
+	reviewNotes := make([]map[string]any, len(plan.ReviewNotes))
 	for i, rn := range plan.ReviewNotes {
-		reviewNotes[i] = map[string]string{
-			"from": rn.From,
-			"text": rn.Text,
+		reviewNotes[i] = map[string]any{
+			"from":         rn.From,
+			"at":           rn.At.UTC().Format(time.RFC3339),
+			"plan_version": rn.PlanVersion,
+			"outcome":      rn.Outcome,
+			"text":         rn.Text,
 		}
 	}
 
@@ -628,21 +652,29 @@ func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
 	return map[string]any{
 		"found": true,
 		"plan": map[string]any{
-			"bifrost_version": plan.BifrostVersion,
-			"created_at":      plan.CreatedAt.UTC().Format(time.RFC3339),
-			"updated_at":      plan.UpdatedAt.UTC().Format(time.RFC3339),
-			"source_tool":     plan.SourceTool,
-			"project":         plan.Project,
-			"status":          plan.Status,
-			"title":           plan.Title,
-			"goal":            plan.Goal,
-			"steps":           steps,
-			"constraints":     plan.Constraints,
-			"review_notes":    reviewNotes,
-			"completion_pct":  plan.CompletionPct(),
-			"steps_done":      done,
-			"steps_pending":   pending,
-			"steps_blocked":   blocked,
+			"bifrost_version":   plan.BifrostVersion,
+			"created_at":        plan.CreatedAt.UTC().Format(time.RFC3339),
+			"updated_at":        plan.UpdatedAt.UTC().Format(time.RFC3339),
+			"source_tool":       plan.SourceTool,
+			"project":           plan.Project,
+			"status":            plan.Status,
+			"plan_version":      plan.PlanVersion,
+			"proposed_by":       plan.ProposedBy,
+			"max_revisions":     plan.MaxRevisions,
+			"revision_count":    plan.RevisionCount,
+			"consensus_state":   plan.ConsensusState,
+			"activation_reason": plan.ActivationReason,
+			"deadlock_detected": plan.DeadlockDetected,
+			"deadlock_reason":   plan.DeadlockReason,
+			"title":             plan.Title,
+			"goal":              plan.Goal,
+			"steps":             steps,
+			"constraints":       plan.Constraints,
+			"review_notes":      reviewNotes,
+			"completion_pct":    plan.CompletionPct(),
+			"steps_done":        done,
+			"steps_pending":     pending,
+			"steps_blocked":     blocked,
 		},
 	}, nil
 }
@@ -733,6 +765,10 @@ func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
 		Goal:           params.Goal,
 		Steps:          steps,
 		Constraints:    params.Constraints,
+		PlanVersion:    1,
+		ProposedBy:     params.SourceTool,
+		MaxRevisions:   3,
+		ConsensusState: snapshot.ConsensusNone,
 	}
 
 	if err := snapshot.WritePlan(ts.projectRoot, params.Name, plan); err != nil {
@@ -749,8 +785,9 @@ func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
 
 // updatePlanParams maps the JSON input for bifrost_update_plan.
 type updatePlanParams struct {
-	Name        string `json:"name"`
-	PlanStatus  string `json:"plan_status"`
+	Name       string `json:"name"`
+	SourceTool string `json:"source_tool"` // who is making this update (reviewer identity)
+	PlanStatus string `json:"plan_status"`
 	ReviewNotes []struct {
 		From string `json:"from"`
 		Text string `json:"text"`
@@ -761,6 +798,11 @@ type updatePlanParams struct {
 		Description string   `json:"description"`
 		Files       []string `json:"files"`
 	} `json:"step_updates"`
+	// Consensus params
+	ReviewOutcome  string `json:"review_outcome"`  // approved | needs_revision
+	ReviewFeedback string `json:"review_feedback"` // text for the review note
+	ForceAccept    bool   `json:"force_accept"`    // bypass consensus
+	Revise         bool   `json:"revise"`          // signal a deliberate revision
 }
 
 func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
@@ -794,8 +836,65 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 		return nil, err
 	}
 
-	// Update plan status
-	if params.PlanStatus != "" {
+	// Validate consensus params
+	if params.ReviewOutcome != "" {
+		switch params.ReviewOutcome {
+		case snapshot.ReviewOutcomeApproved, snapshot.ReviewOutcomeNeedsRevision:
+		default:
+			return nil, fmt.Errorf("invalid review_outcome %q: must be approved or needs_revision", params.ReviewOutcome)
+		}
+	}
+
+	// Handle consensus operations first
+
+	if params.ForceAccept {
+		plan.ConsensusState = snapshot.ConsensusOverridden
+		plan.ActivationReason = snapshot.ActivationForceAccepted
+		plan.Status = snapshot.PlanStatusActive
+	}
+
+	if params.ReviewOutcome != "" {
+		reviewer := params.SourceTool
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		noteText := params.ReviewFeedback
+		if noteText == "" {
+			noteText = params.ReviewOutcome
+		}
+		note := snapshot.ReviewNote{
+			From:        reviewer,
+			At:          time.Now().UTC(),
+			PlanVersion: plan.PlanVersion,
+			Outcome:     params.ReviewOutcome,
+			Text:        noteText,
+		}
+		plan.ReviewNotes = append(plan.ReviewNotes, note)
+
+		switch params.ReviewOutcome {
+		case snapshot.ReviewOutcomeApproved:
+			plan.ConsensusState = snapshot.ConsensusReached
+			plan.ActivationReason = snapshot.ActivationConsensus
+			plan.Status = snapshot.PlanStatusActive
+		case snapshot.ReviewOutcomeNeedsRevision:
+			plan.ConsensusState = snapshot.ConsensusNone
+			if plan.IsDeadlocked() {
+				plan.DeadlockDetected = true
+				plan.DeadlockReason = fmt.Sprintf("max revisions (%d) reached with unresolved needs_revision", plan.MaxRevisions)
+			}
+		}
+	}
+
+	if params.Revise {
+		plan.PlanVersion++
+		plan.RevisionCount++
+		plan.ConsensusState = snapshot.ConsensusNone
+		plan.DeadlockDetected = false
+		plan.DeadlockReason = ""
+	}
+
+	// Update plan status (manual override, only if no consensus operation ran)
+	if params.PlanStatus != "" && params.ReviewOutcome == "" && !params.ForceAccept {
 		switch params.PlanStatus {
 		case snapshot.PlanStatusDraft, snapshot.PlanStatusActive, snapshot.PlanStatusCompleted, snapshot.PlanStatusArchived:
 			plan.Status = params.PlanStatus
@@ -805,6 +904,8 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 	}
 
 	// Apply step updates
+	wasApproved := plan.ConsensusState == snapshot.ConsensusReached && plan.Status == snapshot.PlanStatusActive
+	structuralEdit := false
 	for _, su := range params.StepUpdates {
 		if su.Index < 0 || su.Index >= len(plan.Steps) {
 			return nil, fmt.Errorf("step index %d out of range (0-%d)", su.Index, len(plan.Steps)-1)
@@ -821,6 +922,9 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 			if len(su.Description) > maxFieldLen {
 				return nil, fmt.Errorf("step description exceeds %d characters", maxFieldLen)
 			}
+			if su.Description != plan.Steps[su.Index].Description {
+				structuralEdit = true
+			}
 			plan.Steps[su.Index].Description = su.Description
 		}
 		if su.Files != nil {
@@ -834,6 +938,13 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 			}
 			plan.Steps[su.Index].Files = su.Files
 		}
+	}
+	// A structural edit after approval invalidates the review — reset to draft
+	if wasApproved && structuralEdit && params.ReviewOutcome == "" && !params.ForceAccept {
+		plan.PlanVersion++
+		plan.ConsensusState = snapshot.ConsensusNone
+		plan.Status = snapshot.PlanStatusDraft
+		plan.ActivationReason = ""
 	}
 
 	// Append review notes
@@ -859,12 +970,20 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 		return nil, err
 	}
 
-	return map[string]any{
-		"ok":             true,
-		"name":           params.Name,
-		"status":         plan.Status,
-		"completion_pct": plan.CompletionPct(),
-	}, nil
+	result := map[string]any{
+		"ok":              true,
+		"name":            params.Name,
+		"status":          plan.Status,
+		"plan_version":    plan.PlanVersion,
+		"revision_count":  plan.RevisionCount,
+		"consensus_state": plan.ConsensusState,
+		"completion_pct":  plan.CompletionPct(),
+	}
+	if plan.DeadlockDetected {
+		result["deadlock_detected"] = true
+		result["deadlock_reason"] = plan.DeadlockReason
+	}
+	return result, nil
 }
 
 // deletePlanParams maps the JSON input for bifrost_delete_plan.
@@ -914,6 +1033,11 @@ func (ts *ToolSet) listPlans() (any, error) {
 			info["status"] = plan.Status
 			info["title"] = plan.Title
 			info["completion_pct"] = plan.CompletionPct()
+			info["plan_version"] = plan.PlanVersion
+			info["consensus_state"] = plan.ConsensusState
+			info["revision_count"] = plan.RevisionCount
+			info["deadlock_detected"] = plan.DeadlockDetected
+			info["latest_review_outcome"] = plan.LatestReviewOutcome()
 		}
 		planInfos = append(planInfos, info)
 	}

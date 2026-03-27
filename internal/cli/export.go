@@ -159,29 +159,42 @@ func buildPlansExport(projectRoot string) ([]map[string]any, error) {
 			}
 		}
 
-		reviewNotes := make([]map[string]string, len(p.ReviewNotes))
+		reviewNotes := make([]map[string]any, len(p.ReviewNotes))
 		for i, rn := range p.ReviewNotes {
-			reviewNotes[i] = map[string]string{"from": rn.From, "text": rn.Text}
+			reviewNotes[i] = map[string]any{
+				"from":         rn.From,
+				"at":           rn.At.UTC().Format(time.RFC3339),
+				"plan_version": rn.PlanVersion,
+				"outcome":      rn.Outcome,
+				"text":         rn.Text,
+			}
 		}
 
 		done, pending, blocked := p.StepSummary()
 		result = append(result, map[string]any{
-			"name":           name,
-			"bifrost_version": p.BifrostVersion,
-			"created_at":     p.CreatedAt.UTC().Format(time.RFC3339),
-			"updated_at":     p.UpdatedAt.UTC().Format(time.RFC3339),
-			"source_tool":    p.SourceTool,
-			"project":        p.Project,
-			"status":         p.Status,
-			"title":          p.Title,
-			"goal":           p.Goal,
-			"steps":          steps,
-			"constraints":    p.Constraints,
-			"review_notes":   reviewNotes,
-			"completion_pct": p.CompletionPct(),
-			"steps_done":     done,
-			"steps_pending":  pending,
-			"steps_blocked":  blocked,
+			"name":                 name,
+			"bifrost_version":      p.BifrostVersion,
+			"created_at":           p.CreatedAt.UTC().Format(time.RFC3339),
+			"updated_at":           p.UpdatedAt.UTC().Format(time.RFC3339),
+			"source_tool":          p.SourceTool,
+			"project":              p.Project,
+			"status":               p.Status,
+			"plan_version":         p.PlanVersion,
+			"proposed_by":          p.ProposedBy,
+			"revision_count":       p.RevisionCount,
+			"consensus_state":      p.ConsensusState,
+			"activation_reason":    p.ActivationReason,
+			"deadlock_detected":    p.DeadlockDetected,
+			"latest_review_outcome": p.LatestReviewOutcome(),
+			"title":                p.Title,
+			"goal":                 p.Goal,
+			"steps":                steps,
+			"constraints":          p.Constraints,
+			"review_notes":         reviewNotes,
+			"completion_pct":       p.CompletionPct(),
+			"steps_done":           done,
+			"steps_pending":        pending,
+			"steps_blocked":        blocked,
 		})
 	}
 
