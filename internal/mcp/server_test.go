@@ -1209,3 +1209,378 @@ func TestInvalidConfidenceRejected(t *testing.T) {
 		t.Error("expected error for invalid confidence value, got none")
 	}
 }
+
+func TestConsensusApprovalFlow(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		// Write plan
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "auth-refactor",
+				"title":       "Auth Refactor",
+				"goal":        "Refactor auth.",
+				"steps": []map[string]any{
+					{"description": "Update middleware", "files": []string{"src/auth.go"}},
+				},
+			},
+		}),
+		// Review and approve
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":            "auth-refactor",
+				"source_tool":     "opencode",
+				"review_outcome":  "approved",
+				"review_feedback": "Looks good, proceed.",
+			},
+		}),
+		// Read back
+		rpc(3, "tools/call", map[string]any{
+			"name":      "bifrost_read_plan",
+			"arguments": map[string]any{"name": "auth-refactor"},
+		}),
+	)
+
+	// Write succeeded
+	writeResult := resps[0]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var writeOut map[string]any
+	if err := json.Unmarshal([]byte(writeResult), &writeOut); err != nil {
+		t.Fatalf("parse write result: %v", err)
+	}
+	if writeOut["ok"] != true {
+		t.Errorf("write plan ok = false")
+	}
+
+	// Approval result
+	approveResult := resps[1]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var approveOut map[string]any
+	if err := json.Unmarshal([]byte(approveResult), &approveOut); err != nil {
+		t.Fatalf("parse approve result: %v", err)
+	}
+	if approveOut["consensus_state"] != "reached" {
+		t.Errorf("consensus_state = %v, want reached", approveOut["consensus_state"])
+	}
+	if approveOut["status"] != "active" {
+		t.Errorf("status = %v, want active", approveOut["status"])
+	}
+
+	// Read back confirms state
+	readResult := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var readOut map[string]any
+	if err := json.Unmarshal([]byte(readResult), &readOut); err != nil {
+		t.Fatalf("parse read result: %v", err)
+	}
+	plan := readOut["plan"].(map[string]any)
+	if plan["consensus_state"] != "reached" {
+		t.Errorf("read consensus_state = %v, want reached", plan["consensus_state"])
+	}
+	if plan["activation_reason"] != "consensus" {
+		t.Errorf("activation_reason = %v, want consensus", plan["activation_reason"])
+	}
+	if plan["status"] != "active" {
+		t.Errorf("read status = %v, want active", plan["status"])
+	}
+}
+
+func TestConsensusNeedsRevisionAndRevise(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "opencode",
+				"name":        "test-plan",
+				"title":       "Test Plan",
+				"goal":        "Test revision flow.",
+				"steps":       []map[string]any{{"description": "Step one", "files": []string{}}},
+			},
+		}),
+		// Request revision
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":            "test-plan",
+				"review_outcome":  "needs_revision",
+				"review_feedback": "Missing error handling.",
+			},
+		}),
+		// Revise
+		rpc(3, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":   "test-plan",
+				"revise": true,
+			},
+		}),
+		// Read back
+		rpc(4, "tools/call", map[string]any{
+			"name":      "bifrost_read_plan",
+			"arguments": map[string]any{"name": "test-plan"},
+		}),
+	)
+
+	reviseOut := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var revise map[string]any
+	if err := json.Unmarshal([]byte(reviseOut), &revise); err != nil {
+		t.Fatalf("parse revise: %v", err)
+	}
+	if revise["consensus_state"] != "none" {
+		t.Errorf("consensus_state after revise = %v, want none", revise["consensus_state"])
+	}
+
+	readOut := resps[3]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var read map[string]any
+	if err := json.Unmarshal([]byte(readOut), &read); err != nil {
+		t.Fatalf("parse read: %v", err)
+	}
+	plan := read["plan"].(map[string]any)
+	if plan["revision_count"].(float64) != 1 {
+		t.Errorf("revision_count = %v, want 1", plan["revision_count"])
+	}
+	if plan["plan_version"].(float64) != 2 {
+		t.Errorf("plan_version = %v, want 2", plan["plan_version"])
+	}
+}
+
+func TestForceAccept(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "force-plan",
+				"title":       "Force Plan",
+				"goal":        "Test force accept.",
+				"steps":       []map[string]any{{"description": "Do it", "files": []string{}}},
+			},
+		}),
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":         "force-plan",
+				"force_accept": true,
+			},
+		}),
+	)
+
+	forceOut := resps[1]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var force map[string]any
+	if err := json.Unmarshal([]byte(forceOut), &force); err != nil {
+		t.Fatalf("parse force: %v", err)
+	}
+	if force["consensus_state"] != "overridden" {
+		t.Errorf("consensus_state = %v, want overridden", force["consensus_state"])
+	}
+	if force["status"] != "active" {
+		t.Errorf("status = %v, want active", force["status"])
+	}
+}
+
+func TestDeadlockDetection(t *testing.T) {
+	dir := t.TempDir()
+
+	calls := []string{
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "dl-plan",
+				"title":       "Deadlock Plan",
+				"goal":        "Test deadlock.",
+				"steps":       []map[string]any{{"description": "Step", "files": []string{}}},
+			},
+		}),
+	}
+	// 3 rounds of: needs_revision → revise
+	for i := 0; i < 3; i++ {
+		id := (i * 2) + 2
+		calls = append(calls,
+			rpc(id, "tools/call", map[string]any{
+				"name": "bifrost_update_plan",
+				"arguments": map[string]any{
+					"name":            "dl-plan",
+					"review_outcome":  "needs_revision",
+					"review_feedback": "Still not good.",
+				},
+			}),
+			rpc(id+1, "tools/call", map[string]any{
+				"name": "bifrost_update_plan",
+				"arguments": map[string]any{
+					"name":   "dl-plan",
+					"revise": true,
+				},
+			}),
+		)
+	}
+	// One more needs_revision to trigger deadlock
+	calls = append(calls, rpc(8, "tools/call", map[string]any{
+		"name": "bifrost_update_plan",
+		"arguments": map[string]any{
+			"name":            "dl-plan",
+			"review_outcome":  "needs_revision",
+			"review_feedback": "Still failing.",
+		},
+	}))
+
+	resps := runServer(t, dir, calls...)
+	last := resps[len(resps)-1]
+	lastOut := last["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(lastOut), &out); err != nil {
+		t.Fatalf("parse last: %v", err)
+	}
+	if out["deadlock_detected"] != true {
+		t.Errorf("expected deadlock_detected=true, got %v", out["deadlock_detected"])
+	}
+}
+
+func TestInvalidReviewOutcomeRejected(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "test",
+				"title":       "T",
+				"goal":        "G",
+				"steps":       []map[string]any{},
+			},
+		}),
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":           "test",
+				"review_outcome": "maybe",
+			},
+		}),
+	)
+
+	if resps[1]["error"] == nil {
+		t.Error("expected error for invalid review_outcome, got none")
+	}
+}
+
+func TestReviewNoteAttributedToSourceTool(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "attr-plan",
+				"title":       "Attribution Test",
+				"goal":        "Test reviewer identity.",
+				"steps":       []map[string]any{{"description": "Step", "files": []string{}}},
+			},
+		}),
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":            "attr-plan",
+				"source_tool":     "opencode",
+				"review_outcome":  "needs_revision",
+				"review_feedback": "Missing tests.",
+			},
+		}),
+		rpc(3, "tools/call", map[string]any{
+			"name":      "bifrost_read_plan",
+			"arguments": map[string]any{"name": "attr-plan"},
+		}),
+	)
+
+	readOut := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var read map[string]any
+	if err := json.Unmarshal([]byte(readOut), &read); err != nil {
+		t.Fatalf("parse read: %v", err)
+	}
+	notes := read["plan"].(map[string]any)["review_notes"].([]any)
+	if len(notes) != 1 {
+		t.Fatalf("expected 1 review note, got %d", len(notes))
+	}
+	note := notes[0].(map[string]any)
+	if note["from"] != "opencode" {
+		t.Errorf("review note From = %v, want opencode", note["from"])
+	}
+	if note["outcome"] != "needs_revision" {
+		t.Errorf("review note Outcome = %v, want needs_revision", note["outcome"])
+	}
+}
+
+func TestEditAfterApprovalResetsConsensus(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		// Write plan
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_plan",
+			"arguments": map[string]any{
+				"source_tool": "claude-code",
+				"name":        "edit-plan",
+				"title":       "Edit Test",
+				"goal":        "Test edit after approval.",
+				"steps": []map[string]any{
+					{"description": "Original step", "files": []string{}},
+				},
+			},
+		}),
+		// Approve
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name":            "edit-plan",
+				"source_tool":     "opencode",
+				"review_outcome":  "approved",
+				"review_feedback": "Good.",
+			},
+		}),
+		// Edit step description after approval
+		rpc(3, "tools/call", map[string]any{
+			"name": "bifrost_update_plan",
+			"arguments": map[string]any{
+				"name": "edit-plan",
+				"step_updates": []map[string]any{
+					{"index": 0, "description": "Changed step description"},
+				},
+			},
+		}),
+		// Read back
+		rpc(4, "tools/call", map[string]any{
+			"name":      "bifrost_read_plan",
+			"arguments": map[string]any{"name": "edit-plan"},
+		}),
+	)
+
+	editOut := resps[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var edit map[string]any
+	if err := json.Unmarshal([]byte(editOut), &edit); err != nil {
+		t.Fatalf("parse edit: %v", err)
+	}
+	if edit["consensus_state"] != "none" {
+		t.Errorf("consensus_state after edit = %v, want none", edit["consensus_state"])
+	}
+	if edit["status"] != "draft" {
+		t.Errorf("status after edit = %v, want draft", edit["status"])
+	}
+
+	readOut := resps[3]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	var read map[string]any
+	if err := json.Unmarshal([]byte(readOut), &read); err != nil {
+		t.Fatalf("parse read: %v", err)
+	}
+	plan := read["plan"].(map[string]any)
+	if plan["plan_version"].(float64) != 2 {
+		t.Errorf("plan_version after edit = %v, want 2", plan["plan_version"])
+	}
+	if plan["status"] != "draft" {
+		t.Errorf("read status after edit = %v, want draft", plan["status"])
+	}
+}
