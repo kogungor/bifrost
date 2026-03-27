@@ -16,6 +16,17 @@ archives:
       - goos: windows
         formats: [zip]
 
+notarize:
+  macos:
+    - enabled: true
+      sign:
+        certificate: "{{.Env.MACOS_SIGN_P12}}"
+        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
+      notarize:
+        issuer_id: "{{.Env.NOTARIZE_ISSUER_ID}}"
+        key_id: "{{.Env.NOTARIZE_KEY_ID}}"
+        key: "{{.Env.NOTARIZE_KEY}}"
+
 checksum:
   name_template: checksums.txt
 

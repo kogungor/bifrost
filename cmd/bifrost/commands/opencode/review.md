@@ -4,7 +4,7 @@ gaps, and improvements.
 ## Your task
 
 Act as a critical technical reviewer. Analyze the target document and provide
-structured feedback.
+structured feedback with an explicit outcome: approved or needs_revision.
 
 ## Steps
 
@@ -34,6 +34,10 @@ If no plan is found, print:
 
 Then stop.
 
+**Check consensus state before reviewing:**
+- If `consensus_state` is `reached` or `overridden`: the plan is already active. Inform the user and stop unless they explicitly want a re-review.
+- If `deadlock_detected` is true: warn the user before proceeding.
+
 Analyze the plan critically. Consider:
 - **Completeness**: Are there missing steps? Gaps in the workflow?
 - **Ordering**: Are steps in the right sequence? Are dependencies respected?
@@ -44,14 +48,23 @@ Analyze the plan critically. Consider:
 - **Testing**: Is the test strategy adequate?
 - **File coverage**: Are all affected files listed?
 
-Add your observations using `bifrost_update_plan` with:
+**Decide your outcome:** approved or needs_revision.
+
+Call `bifrost_update_plan` with:
 - `name`: the plan name
-- `review_notes`: array of `{from: "opencode", text: "..."}` objects
+- `source_tool`: "opencode"
+- `review_outcome`: `"approved"` or `"needs_revision"`
+- `review_feedback`: your complete review findings as a single string (specific, actionable)
 
-Each note should be specific and actionable. Avoid vague feedback.
+Do NOT set `plan_status` manually — the consensus mechanism handles activation automatically.
 
-After adding review notes, update the plan status to "active" using `bifrost_update_plan`
-with `plan_status: "active"` if it is currently "draft".
+If `review_outcome` is `"approved"`:
+- The plan will automatically become active (consensus_state: reached).
+
+If `review_outcome` is `"needs_revision"`:
+- The planner must revise and re-submit. If `deadlock_detected` is returned as true in the
+  response, inform the user that max revisions has been reached and `/plan --force-accept`
+  is available to override.
 
 **Step 2b — File review mode** (when reviewing an arbitrary file)
 
@@ -71,16 +84,19 @@ For plan reviews, print:
 ```
   Review complete for .bifrost/<name>.plan.md
 
-  <count> observations added
-  Plan status: <status>
-  Completion: <pct>% (<done>/<total> steps done)
+  Outcome       <approved | needs_revision>
+  Plan version  v<plan_version>
+  Revision      <revision_count> of <max_revisions>
+  Consensus     <consensus_state>
 
   Key findings:
   - <finding 1>
   - <finding 2>
   - <finding 3>
 
-  Review notes are saved inline in the plan file.
+  <If approved:>  Plan is now active. Work can begin.
+  <If needs_revision:>  Planner should run /plan --revise to address feedback.
+  <If deadlock:>  Max revisions reached. Planner can run /plan --force-accept to override.
 ```
 
 For file reviews, print:
