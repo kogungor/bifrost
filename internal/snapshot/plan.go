@@ -22,6 +22,25 @@ const (
 	PlanStatusArchived  = "archived"
 )
 
+// Consensus states.
+const (
+	ConsensusNone      = "none"
+	ConsensusReached   = "reached"
+	ConsensusOverridden = "overridden"
+)
+
+// Activation reasons.
+const (
+	ActivationConsensus     = "consensus"
+	ActivationForceAccepted = "force_accepted"
+)
+
+// Review outcomes.
+const (
+	ReviewOutcomeApproved      = "approved"
+	ReviewOutcomeNeedsRevision = "needs_revision"
+)
+
 // Plan represents a Bifrost implementation plan.
 type Plan struct {
 	BifrostVersion int       `yaml:"bifrost_version"`
@@ -30,6 +49,16 @@ type Plan struct {
 	SourceTool     string    `yaml:"source_tool"`
 	Project        string    `yaml:"project"`
 	Status         string    `yaml:"status"` // draft, active, completed, archived
+
+	// Consensus fields
+	PlanVersion      int    `yaml:"plan_version"`                  // increments on every content edit
+	ProposedBy       string `yaml:"proposed_by,omitempty"`          // source_tool that created the plan
+	MaxRevisions     int    `yaml:"max_revisions,omitempty"`        // deadlock threshold, default 3
+	RevisionCount    int    `yaml:"revision_count,omitempty"`       // how many revise cycles
+	ConsensusState   string `yaml:"consensus_state,omitempty"`      // none | reached | overridden
+	ActivationReason string `yaml:"activation_reason,omitempty"`    // consensus | force_accepted
+	DeadlockDetected bool   `yaml:"deadlock_detected,omitempty"`
+	DeadlockReason   string `yaml:"deadlock_reason,omitempty"`
 
 	Title       string
 	Goal        string
@@ -53,8 +82,11 @@ func GenerateStepID(description string, createdAt time.Time) string {
 
 // ReviewNote represents an inline review observation.
 type ReviewNote struct {
-	From string
-	Text string
+	From        string
+	At          time.Time // when the review was written
+	PlanVersion int       // which plan_version was reviewed
+	Outcome     string    // approved | needs_revision (empty for legacy notes)
+	Text        string
 }
 
 // planFrontmatter holds the YAML frontmatter fields for a plan.
@@ -67,6 +99,15 @@ type planFrontmatter struct {
 	Status         string `yaml:"status"`
 	// Legacy field for backward compatibility
 	Timestamp string `yaml:"timestamp"`
+	// Consensus fields
+	PlanVersion      int    `yaml:"plan_version"`
+	ProposedBy       string `yaml:"proposed_by,omitempty"`
+	MaxRevisions     int    `yaml:"max_revisions,omitempty"`
+	RevisionCount    int    `yaml:"revision_count,omitempty"`
+	ConsensusState   string `yaml:"consensus_state,omitempty"`
+	ActivationReason string `yaml:"activation_reason,omitempty"`
+	DeadlockDetected bool   `yaml:"deadlock_detected,omitempty"`
+	DeadlockReason   string `yaml:"deadlock_reason,omitempty"`
 }
 
 // CompletionPct returns the percentage of steps marked as done.
@@ -97,6 +138,27 @@ func (p *Plan) StepSummary() (done, pending, blocked int) {
 		}
 	}
 	return
+}
+
+// LatestReviewOutcome returns the outcome of the most recent ReviewNote, or "" if none.
+func (p *Plan) LatestReviewOutcome() string {
+	if len(p.ReviewNotes) == 0 {
+		return ""
+	}
+	return p.ReviewNotes[len(p.ReviewNotes)-1].Outcome
+}
+
+// IsDeadlocked returns true when the revision count has reached the max threshold
+// and the latest review outcome is still needs_revision.
+func (p *Plan) IsDeadlocked() bool {
+	if p.DeadlockDetected {
+		return true
+	}
+	max := p.MaxRevisions
+	if max <= 0 {
+		max = 3
+	}
+	return p.RevisionCount >= max && p.LatestReviewOutcome() == ReviewOutcomeNeedsRevision
 }
 
 // maxPlanNameLen limits plan name length.
@@ -240,13 +302,30 @@ func ParsePlan(data []byte) (*Plan, error) {
 		status = PlanStatusDraft
 	}
 
+	planVersion := fm.PlanVersion
+	if planVersion <= 0 {
+		planVersion = 1
+	}
+	maxRevisions := fm.MaxRevisions
+	if maxRevisions <= 0 {
+		maxRevisions = 3
+	}
+
 	p := &Plan{
-		BifrostVersion: fm.BifrostVersion,
-		CreatedAt:      createdAt,
-		UpdatedAt:      updatedAt,
-		SourceTool:     fm.SourceTool,
-		Project:        fm.Project,
-		Status:         status,
+		BifrostVersion:   fm.BifrostVersion,
+		CreatedAt:        createdAt,
+		UpdatedAt:        updatedAt,
+		SourceTool:       fm.SourceTool,
+		Project:          fm.Project,
+		Status:           status,
+		PlanVersion:      planVersion,
+		ProposedBy:       fm.ProposedBy,
+		MaxRevisions:     maxRevisions,
+		RevisionCount:    fm.RevisionCount,
+		ConsensusState:   fm.ConsensusState,
+		ActivationReason: fm.ActivationReason,
+		DeadlockDetected: fm.DeadlockDetected,
+		DeadlockReason:   fm.DeadlockReason,
 	}
 
 	sections := parseSections(body)
@@ -279,6 +358,30 @@ func RenderPlan(p *Plan) string {
 	b.WriteString(fmt.Sprintf("source_tool: %s\n", p.SourceTool))
 	b.WriteString(fmt.Sprintf("project: %s\n", p.Project))
 	b.WriteString(fmt.Sprintf("status: %s\n", p.Status))
+	b.WriteString(fmt.Sprintf("plan_version: %d\n", p.PlanVersion))
+	if p.ProposedBy != "" {
+		b.WriteString(fmt.Sprintf("proposed_by: %s\n", p.ProposedBy))
+	}
+	maxRev := p.MaxRevisions
+	if maxRev <= 0 {
+		maxRev = 3
+	}
+	b.WriteString(fmt.Sprintf("max_revisions: %d\n", maxRev))
+	if p.RevisionCount > 0 {
+		b.WriteString(fmt.Sprintf("revision_count: %d\n", p.RevisionCount))
+	}
+	if p.ConsensusState != "" {
+		b.WriteString(fmt.Sprintf("consensus_state: %s\n", p.ConsensusState))
+	}
+	if p.ActivationReason != "" {
+		b.WriteString(fmt.Sprintf("activation_reason: %s\n", p.ActivationReason))
+	}
+	if p.DeadlockDetected {
+		b.WriteString("deadlock_detected: true\n")
+		if p.DeadlockReason != "" {
+			b.WriteString(fmt.Sprintf("deadlock_reason: %s\n", p.DeadlockReason))
+		}
+	}
 	b.WriteString("---\n\n")
 
 	// Title
@@ -329,7 +432,13 @@ func RenderPlan(p *Plan) string {
 		b.WriteString("No review notes yet.\n")
 	} else {
 		for _, rn := range p.ReviewNotes {
-			b.WriteString(fmt.Sprintf("> [%s] %s\n", rn.From, rn.Text))
+			if rn.Outcome != "" {
+				at := rn.At.UTC().Format(time.RFC3339)
+				b.WriteString(fmt.Sprintf("> [%s | %s | v%d | %s] %s\n", rn.From, at, rn.PlanVersion, rn.Outcome, rn.Text))
+			} else {
+				// Legacy format for notes without outcome
+				b.WriteString(fmt.Sprintf("> [%s] %s\n", rn.From, rn.Text))
+			}
 		}
 	}
 
@@ -447,15 +556,37 @@ func parsePlanReviewNotes(section string) []ReviewNote {
 		if !strings.HasPrefix(line, "> [") {
 			continue
 		}
-		// Parse "> [from] text"
 		inner := strings.TrimPrefix(line, "> [")
 		idx := strings.Index(inner, "] ")
 		if idx < 0 {
 			continue
 		}
-		from := inner[:idx]
+		header := inner[:idx]
 		text := inner[idx+2:]
-		notes = append(notes, ReviewNote{From: from, Text: text})
+
+		// New format: "from | at | vN | outcome"
+		parts := strings.Split(header, " | ")
+		if len(parts) == 4 {
+			from := strings.TrimSpace(parts[0])
+			atStr := strings.TrimSpace(parts[1])
+			versionStr := strings.TrimPrefix(strings.TrimSpace(parts[2]), "v")
+			outcome := strings.TrimSpace(parts[3])
+
+			at, _ := time.Parse(time.RFC3339, atStr)
+			version := 0
+			fmt.Sscanf(versionStr, "%d", &version)
+
+			notes = append(notes, ReviewNote{
+				From:        from,
+				At:          at,
+				PlanVersion: version,
+				Outcome:     outcome,
+				Text:        text,
+			})
+		} else {
+			// Legacy format: "from"
+			notes = append(notes, ReviewNote{From: header, Text: text})
+		}
 	}
 	return notes
 }

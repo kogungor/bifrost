@@ -774,3 +774,181 @@ func TestGenerateStepIDDeterministic(t *testing.T) {
 		t.Error("expected different IDs for different descriptions")
 	}
 }
+
+func TestConsensusFieldsRoundTrip(t *testing.T) {
+	now := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+	p := &Plan{
+		BifrostVersion:   1,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		SourceTool:       "claude-code",
+		Project:          "my-api",
+		Status:           PlanStatusActive,
+		Title:            "Consensus Test",
+		Goal:             "Test consensus fields.",
+		PlanVersion:      3,
+		ProposedBy:       "claude-code",
+		MaxRevisions:     5,
+		RevisionCount:    2,
+		ConsensusState:   ConsensusReached,
+		ActivationReason: ActivationConsensus,
+	}
+
+	rendered := RenderPlan(p)
+	parsed, err := ParsePlan([]byte(rendered))
+	if err != nil {
+		t.Fatalf("ParsePlan error: %v", err)
+	}
+
+	if parsed.PlanVersion != 3 {
+		t.Errorf("PlanVersion = %d, want 3", parsed.PlanVersion)
+	}
+	if parsed.ProposedBy != "claude-code" {
+		t.Errorf("ProposedBy = %q, want claude-code", parsed.ProposedBy)
+	}
+	if parsed.MaxRevisions != 5 {
+		t.Errorf("MaxRevisions = %d, want 5", parsed.MaxRevisions)
+	}
+	if parsed.RevisionCount != 2 {
+		t.Errorf("RevisionCount = %d, want 2", parsed.RevisionCount)
+	}
+	if parsed.ConsensusState != ConsensusReached {
+		t.Errorf("ConsensusState = %q, want %q", parsed.ConsensusState, ConsensusReached)
+	}
+	if parsed.ActivationReason != ActivationConsensus {
+		t.Errorf("ActivationReason = %q, want %q", parsed.ActivationReason, ActivationConsensus)
+	}
+}
+
+func TestReviewNoteNewFormatRoundTrip(t *testing.T) {
+	at := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+	now := at.Add(-time.Hour)
+	p := &Plan{
+		BifrostVersion: 1,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     "claude-code",
+		Project:        "my-api",
+		Status:         PlanStatusDraft,
+		Title:          "Note Format Test",
+		Goal:           "Test review note format.",
+		ReviewNotes: []ReviewNote{
+			{From: "opencode", At: at, PlanVersion: 2, Outcome: ReviewOutcomeNeedsRevision, Text: "auth flow missing"},
+			{From: "opencode", At: at.Add(time.Hour), PlanVersion: 3, Outcome: ReviewOutcomeApproved, Text: "looks good"},
+		},
+	}
+
+	rendered := RenderPlan(p)
+	parsed, err := ParsePlan([]byte(rendered))
+	if err != nil {
+		t.Fatalf("ParsePlan error: %v", err)
+	}
+
+	if len(parsed.ReviewNotes) != 2 {
+		t.Fatalf("ReviewNotes len = %d, want 2", len(parsed.ReviewNotes))
+	}
+	n := parsed.ReviewNotes[0]
+	if n.From != "opencode" {
+		t.Errorf("note[0].From = %q, want opencode", n.From)
+	}
+	if n.Outcome != ReviewOutcomeNeedsRevision {
+		t.Errorf("note[0].Outcome = %q, want %q", n.Outcome, ReviewOutcomeNeedsRevision)
+	}
+	if n.PlanVersion != 2 {
+		t.Errorf("note[0].PlanVersion = %d, want 2", n.PlanVersion)
+	}
+	if n.Text != "auth flow missing" {
+		t.Errorf("note[0].Text = %q, want 'auth flow missing'", n.Text)
+	}
+
+	n2 := parsed.ReviewNotes[1]
+	if n2.Outcome != ReviewOutcomeApproved {
+		t.Errorf("note[1].Outcome = %q, want %q", n2.Outcome, ReviewOutcomeApproved)
+	}
+}
+
+func TestLegacyReviewNoteStillParses(t *testing.T) {
+	raw := `---
+bifrost_version: 1
+created_at: 2026-03-27T10:00:00Z
+updated_at: 2026-03-27T10:00:00Z
+source_tool: claude-code
+project: my-api
+status: draft
+---
+
+# Legacy Note Test
+
+## Goal
+Test legacy note parsing.
+
+## Steps
+No steps defined.
+
+## Constraints
+No constraints.
+
+## Review Notes
+> [opencode] This is a legacy note without outcome
+`
+	p, err := ParsePlan([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParsePlan error: %v", err)
+	}
+	if len(p.ReviewNotes) != 1 {
+		t.Fatalf("ReviewNotes len = %d, want 1", len(p.ReviewNotes))
+	}
+	n := p.ReviewNotes[0]
+	if n.From != "opencode" {
+		t.Errorf("From = %q, want opencode", n.From)
+	}
+	if n.Text != "This is a legacy note without outcome" {
+		t.Errorf("Text = %q", n.Text)
+	}
+	if n.Outcome != "" {
+		t.Errorf("Outcome should be empty for legacy notes, got %q", n.Outcome)
+	}
+}
+
+func TestIsDeadlocked(t *testing.T) {
+	p := &Plan{MaxRevisions: 3, RevisionCount: 3}
+
+	// Not deadlocked without needs_revision outcome
+	if p.IsDeadlocked() {
+		t.Error("should not be deadlocked without review notes")
+	}
+
+	p.ReviewNotes = []ReviewNote{
+		{Outcome: ReviewOutcomeNeedsRevision},
+	}
+	if !p.IsDeadlocked() {
+		t.Error("should be deadlocked: revision_count >= max_revisions and latest is needs_revision")
+	}
+
+	// Approved overrides
+	p.ReviewNotes = append(p.ReviewNotes, ReviewNote{Outcome: ReviewOutcomeApproved})
+	if p.IsDeadlocked() {
+		t.Error("should not be deadlocked when latest outcome is approved")
+	}
+
+	// Explicit flag
+	p2 := &Plan{DeadlockDetected: true}
+	if !p2.IsDeadlocked() {
+		t.Error("should be deadlocked when DeadlockDetected is true")
+	}
+}
+
+func TestLatestReviewOutcome(t *testing.T) {
+	p := &Plan{}
+	if p.LatestReviewOutcome() != "" {
+		t.Error("expected empty outcome with no notes")
+	}
+
+	p.ReviewNotes = []ReviewNote{
+		{Outcome: ReviewOutcomeNeedsRevision},
+		{Outcome: ReviewOutcomeApproved},
+	}
+	if p.LatestReviewOutcome() != ReviewOutcomeApproved {
+		t.Errorf("expected approved, got %q", p.LatestReviewOutcome())
+	}
+}
