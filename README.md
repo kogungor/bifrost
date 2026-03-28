@@ -45,6 +45,58 @@ Claude Code                              OpenCode
 3. Type `/handin` — the AI reads the snapshot and presents a structured briefing
 4. Continue working — with full context and calibrated trust
 
+## Built with Bifrost
+
+This is a real `/handin` briefing from the session that built Bifrost itself — loaded in Claude Code after a `/handoff` from a previous session that hit the context limit:
+
+```
+─────────────────────────────────────────
+ Bifrost Briefing
+─────────────────────────────────────────
+
+Project    bifrost
+From       claude-code
+Captured   earlier today (2026-03-28 ~10:37 UTC)
+Pressure   HIGH — previous session was near context limit
+
+Task
+Implement improvements from audit: OpenCode MCPConfigPath bug, snapshot
+retention, plan lock conflict reporting, snapshot size warning,
+doctor --fix mode, and CI badges.
+
+Status
+  [x] OpenCode MCPConfigPath bug fixed — returns absolute path, test updated
+  [x] Snapshot retention — Prune() + DefaultMaxHistory=50, auto-called in Write()
+  [x] Plan lock conflict reporting — active lock returns explicit error with rm hint
+  [x] Snapshot size warning in bifrost status — KB display, warn at >5KB and >10KB
+  [x] bifrost doctor --fix — auto-fixes commands, gitignore, BIFROST.md, MCP
+  [x] CI + Go Report Card + MIT badges added to README
+
+Key decisions
+  - Prune is best-effort: _ = Prune(...) — failure never blocks snapshot write
+  - staleLockAge = 30s: abandoned locks auto-removed; active locks return explicit error
+  - doctor --fix covers 4 cases: commands, MCP, BIFROST.md, gitignore
+  - MCP preferred over file write; fallback is documented limitation
+
+Environment notes
+  - go test ./... passes from repo root
+  - internal/cli coverage ~5% due to exec.Command integration tests
+
+Next step
+  Copy this /handin briefing output into README.md under a new "Built with
+  Bifrost" section as real-world proof.
+─────────────────────────────────────────
+
+Handoff note from claude-code
+"All improvements from audit complete — bug fixes, retention, lock reporting,
+size warning, doctor --fix, badges. Next: copy /handin briefing to README as
+real-world proof"
+```
+
+The previous session ran out of context mid-sprint. Everything above was reconstructed from a single `/handoff`. The new session picked up without re-explanation.
+
+---
+
 ## What Gets Captured
 
 **Session state** — what you were doing:
@@ -395,21 +447,21 @@ REST API for the mobile app. Currently in beta.
 
 ## CLI Reference
 
-| Command                      | Description                                   |
-| ---------------------------- | --------------------------------------------- |
-| `bifrost install`            | Register slash commands for detected AI tools  |
-| `bifrost install --mcp`      | Also register Bifrost as an MCP server        |
-| `bifrost init`               | Initialize Bifrost in the current project     |
+| Command                      | Description                                      |
+| ---------------------------- | ------------------------------------------------ |
+| `bifrost install`            | Register slash commands for detected AI tools    |
+| `bifrost install --mcp`      | Also register Bifrost as an MCP server           |
+| `bifrost init`               | Initialize Bifrost in the current project        |
 | `bifrost status`             | Show snapshot age, size, intent, and active plan |
-| `bifrost export`             | Export snapshot and/or plans as JSON to stdout |
-| `bifrost doctor`             | Diagnose installation and configuration       |
-| `bifrost doctor --fix`       | Diagnose and automatically fix detected issues |
-| `bifrost history`            | List archived snapshots                       |
-| `bifrost restore <n>`        | Restore a historical snapshot                 |
-| `bifrost update`             | Show update instructions for the latest release |
-| `bifrost update --check`     | Check if a newer version is available         |
-| `bifrost version`            | Print version                                 |
-| `bifrost completion <shell>` | Generate shell completions (bash, zsh, fish)  |
+| `bifrost export`             | Export snapshot and/or plans as JSON to stdout   |
+| `bifrost doctor`             | Diagnose installation and configuration          |
+| `bifrost doctor --fix`       | Diagnose and automatically fix detected issues   |
+| `bifrost history`            | List archived snapshots                          |
+| `bifrost restore <n>`        | Restore a historical snapshot                    |
+| `bifrost update`             | Show update instructions for the latest release  |
+| `bifrost update --check`     | Check if a newer version is available            |
+| `bifrost version`            | Print version                                    |
+| `bifrost completion <shell>` | Generate shell completions (bash, zsh, fish)     |
 
 ### Global Flags
 
@@ -461,13 +513,13 @@ Adding a new tool requires only a new adapter file — no changes to core logic.
 
 ## Files
 
-| Path                        | Purpose                             | In Git? |
-| --------------------------- | ----------------------------------- | ------- |
-| `BIFROST.md`                | Project config (stack, conventions) | Yes     |
-| `.bifrost/session.md`       | Active snapshot                     | No      |
-| `.bifrost/handoff.md`       | Freeform handoff note               | No      |
-| `.bifrost/history/`         | Archived snapshots                  | No      |
-| `.bifrost/<name>.plan.md`   | Implementation plans                | No      |
+| Path                      | Purpose                             | In Git? |
+| ------------------------- | ----------------------------------- | ------- |
+| `BIFROST.md`              | Project config (stack, conventions) | Yes     |
+| `.bifrost/session.md`     | Active snapshot                     | No      |
+| `.bifrost/handoff.md`     | Freeform handoff note               | No      |
+| `.bifrost/history/`       | Archived snapshots                  | No      |
+| `.bifrost/<name>.plan.md` | Implementation plans                | No      |
 
 `.bifrost/` is automatically added to `.gitignore`.
 
@@ -485,22 +537,22 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 
 ### Snapshot Tools
 
-| Tool                     | Description                                    |
-| ------------------------ | ---------------------------------------------- |
-| `bifrost_read_snapshot`  | Read the current session snapshot (returns all fields including semantic enrichments) |
+| Tool                     | Description                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bifrost_read_snapshot`  | Read the current session snapshot (returns all fields including semantic enrichments)                                                               |
 | `bifrost_write_snapshot` | Write a new snapshot — accepts session intent, assumptions, open questions, risks, confidence on files, and active plan name; auto-collects git SHA |
-| `bifrost_write_note`     | Write a freeform handoff note                  |
-| `bifrost_status`         | Quick status: snapshot age, session intent, active plan, open question count, history count |
+| `bifrost_write_note`     | Write a freeform handoff note                                                                                                                       |
+| `bifrost_status`         | Quick status: snapshot age, session intent, active plan, open question count, history count                                                         |
 
 ### Plan Tools
 
-| Tool                     | Description                                                   |
-| ------------------------ | ------------------------------------------------------------- |
-| `bifrost_read_plan`      | Read a named plan (default: "plan")                          |
-| `bifrost_write_plan`     | Create a new plan with title, goal, steps, and constraints   |
-| `bifrost_update_plan`    | Add review notes, update step statuses/content, change plan status |
-| `bifrost_delete_plan`    | Delete a named plan                                          |
-| `bifrost_list_plans`     | List all plans with name, status, title, and completion %    |
+| Tool                  | Description                                                        |
+| --------------------- | ------------------------------------------------------------------ |
+| `bifrost_read_plan`   | Read a named plan (default: "plan")                                |
+| `bifrost_write_plan`  | Create a new plan with title, goal, steps, and constraints         |
+| `bifrost_update_plan` | Add review notes, update step statuses/content, change plan status |
+| `bifrost_delete_plan` | Delete a named plan                                                |
+| `bifrost_list_plans`  | List all plans with name, status, title, and completion %          |
 
 ## What Bifrost Is Not
 
@@ -510,6 +562,15 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 - A replacement for CLAUDE.md or AGENTS.md
 
 Bifrost is a point-in-time session snapshot protocol and cross-tool planning workflow with a simple slash command UX.
+
+## Contributing
+
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, project structure, and how to add new adapters or slash commands.
+
+**Known gaps for contributors:**
+
+- `internal/cli` test coverage is ~5% — the integration tests run against a compiled binary so Go's coverage tool cannot instrument them. Fixing this requires building with `go build -cover` and setting `GOCOVERDIR` in the test harness.
+- **Cursor adapter** — most-requested missing adapter. Needs research into Cursor's slash command format and MCP config path before implementation.
 
 ## Security
 
