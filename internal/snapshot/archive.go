@@ -64,6 +64,46 @@ func archiveRaw(projectRoot string, data []byte, name string) error {
 	return err
 }
 
+// DefaultMaxHistory is the default maximum number of snapshots to retain in history.
+const DefaultMaxHistory = 50
+
+// Prune removes the oldest archived snapshots, keeping at most maxKeep entries.
+// If maxKeep <= 0, no pruning is done.
+// Errors from individual deletions are ignored — prune is best-effort.
+func Prune(projectRoot string, maxKeep int) error {
+	if maxKeep <= 0 {
+		return nil
+	}
+
+	dir := HistoryDir(projectRoot)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var mdFiles []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			mdFiles = append(mdFiles, e)
+		}
+	}
+
+	// ReadDir returns entries sorted by name; filenames are timestamps so this
+	// is chronological order — oldest entries are at the front.
+	if len(mdFiles) <= maxKeep {
+		return nil
+	}
+
+	toDelete := mdFiles[:len(mdFiles)-maxKeep]
+	for _, e := range toDelete {
+		os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck — best-effort
+	}
+	return nil
+}
+
 // History returns all archived snapshots sorted newest-first.
 func History(projectRoot string) ([]*Snapshot, error) {
 	dir := HistoryDir(projectRoot)
