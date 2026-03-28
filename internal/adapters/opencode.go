@@ -30,6 +30,8 @@ func (a *OpenCode) CommandsDir() string {
 	return filepath.Join(a.homeDir, ".opencode", "commands")
 }
 
-func (a *OpenCode) MCPConfigPath() string { return "opencode.json" }
+func (a *OpenCode) MCPConfigPath() string {
+	return filepath.Join(a.homeDir, ".opencode", "opencode.json")
+}
 
 func (a *OpenCode) InstructionFile() string { return "AGENTS.md" }
