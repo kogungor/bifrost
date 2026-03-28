@@ -185,6 +185,87 @@ func TestDoctorUnhealthy(t *testing.T) {
 	}
 }
 
+func TestDoctorFixRegistersCommands(t *testing.T) {
+	home := t.TempDir()
+
+	// .claude exists but no commands registered, .git present, gitignore missing .bifrost/
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+	os.WriteFile(filepath.Join(home, ".gitignore"), []byte("node_modules/\n"), 0644)
+
+	out, _, code := runBifrost(t, home, "doctor", "--fix", "--project", home)
+	if code != 0 {
+		t.Fatalf("doctor --fix failed (exit %d): %s", code, out)
+	}
+
+	// Commands should now be registered
+	handoff := filepath.Join(home, ".claude", "commands", "handoff.md")
+	handin := filepath.Join(home, ".claude", "commands", "handin.md")
+	if _, err := os.Stat(handoff); err != nil {
+		t.Errorf("handoff.md not created by --fix: %v", err)
+	}
+	if _, err := os.Stat(handin); err != nil {
+		t.Errorf("handin.md not created by --fix: %v", err)
+	}
+
+	if !strings.Contains(out, "[fixed]") {
+		t.Errorf("expected '[fixed]' in output, got:\n%s", out)
+	}
+}
+
+func TestDoctorFixGitignore(t *testing.T) {
+	home := t.TempDir()
+
+	// Healthy commands, but .bifrost/ not in gitignore
+	os.MkdirAll(filepath.Join(home, ".claude", "commands"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "commands", "handoff.md"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(home, ".claude", "commands", "handin.md"), []byte("test"), 0644)
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+	os.WriteFile(filepath.Join(home, ".gitignore"), []byte("node_modules/\n"), 0644)
+
+	out, _, code := runBifrost(t, home, "doctor", "--fix", "--project", home)
+	if code != 0 {
+		t.Fatalf("doctor --fix failed (exit %d): %s", code, out)
+	}
+
+	// .gitignore should now contain .bifrost/
+	data, err := os.ReadFile(filepath.Join(home, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), ".bifrost/") {
+		t.Errorf(".gitignore should contain .bifrost/ after --fix, got:\n%s", string(data))
+	}
+
+	if !strings.Contains(out, "[fixed]") {
+		t.Errorf("expected '[fixed]' in output, got:\n%s", out)
+	}
+}
+
+func TestDoctorFixCreatesBifrostMd(t *testing.T) {
+	home := t.TempDir()
+
+	// Healthy commands and gitignore, but no BIFROST.md
+	os.MkdirAll(filepath.Join(home, ".claude", "commands"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "commands", "handoff.md"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(home, ".claude", "commands", "handin.md"), []byte("test"), 0644)
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+	os.WriteFile(filepath.Join(home, ".gitignore"), []byte(".bifrost/\n"), 0644)
+
+	out, _, code := runBifrost(t, home, "doctor", "--fix", "--project", home)
+	if code != 0 {
+		t.Fatalf("doctor --fix failed (exit %d): %s", code, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, "BIFROST.md")); err != nil {
+		t.Errorf("BIFROST.md not created by --fix: %v", err)
+	}
+
+	if !strings.Contains(out, "[fixed]") {
+		t.Errorf("expected '[fixed]' in output, got:\n%s", out)
+	}
+}
+
 // --- 8.3 Integration test: status with/without snapshot ---
 
 func TestStatusNoSnapshot(t *testing.T) {

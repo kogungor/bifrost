@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`bifrost doctor --fix`** — automatically fixes detected issues: registers missing slash commands, adds `.bifrost/` to `.gitignore`, and creates a `BIFROST.md` template. Issues that cannot be fixed automatically are still reported with manual instructions. MCP registration is also attempted when not configured.
 - **Snapshot history retention limit** — `.bifrost/history/` is automatically pruned to the 50 most recent entries after each `/handoff`. Oldest snapshots are removed first. The limit is exposed as `DefaultMaxHistory = 50` in the snapshot package.
 - **Snapshot size indicator in `bifrost status`** — shows snapshot size in KB. Warns at >5 KB ("consider trimming") and >10 KB ("large snapshot, consider trimming decisions or environment notes").
 - **Plan consensus mechanism** — two-party approval flow before a plan becomes active. Reviewer submits `approved` or `needs_revision` via `/review`; planner revises with `/plan --revise`; deadlock auto-detected after `max_revisions` (default 3); force-accept escape hatch via `/plan --force-accept`.
