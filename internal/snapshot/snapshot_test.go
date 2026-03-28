@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -459,5 +460,136 @@ func TestRestoreRoundTrip(t *testing.T) {
 	restored, _ := Read(tmp)
 	if restored.CurrentTask != "first task" {
 		t.Errorf("expected first task after restore, got %q", restored.CurrentTask)
+	}
+}
+
+func TestPruneNoop(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Prune on empty / non-existent history dir should not error
+	if err := Prune(tmp, 10); err != nil {
+		t.Fatalf("Prune on empty dir: %v", err)
+	}
+
+	// maxKeep <= 0 should always be a no-op
+	if err := Prune(tmp, 0); err != nil {
+		t.Fatalf("Prune(0): %v", err)
+	}
+	if err := Prune(tmp, -1); err != nil {
+		t.Fatalf("Prune(-1): %v", err)
+	}
+}
+
+func TestPruneKeepsNewest(t *testing.T) {
+	tmp := t.TempDir()
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Write 5 snapshots so history ends up with 4 archived entries
+	// (each Write archives the previous one)
+	for i := 0; i < 5; i++ {
+		s := &Snapshot{
+			BifrostVersion: 1,
+			Timestamp:      base.Add(time.Duration(i) * time.Hour),
+			SourceTool:     "claude-code",
+			Project:        "test",
+			TokenPressure:  "low",
+			CurrentTask:    fmt.Sprintf("task-%d", i),
+			NextStep:       "next",
+		}
+		if err := Write(tmp, s); err != nil {
+			t.Fatalf("Write %d: %v", i, err)
+		}
+	}
+
+	history, err := History(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 4 {
+		t.Fatalf("expected 4 history entries before prune, got %d", len(history))
+	}
+
+	// Prune to 2 — should remove 2 oldest, keep 2 newest
+	if err := Prune(tmp, 2); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	history, err = History(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history entries after prune, got %d", len(history))
+	}
+
+	// Newest entry should be task-3 (index 0 = newest-first)
+	if history[0].CurrentTask != "task-3" {
+		t.Errorf("expected task-3 as newest after prune, got %q", history[0].CurrentTask)
+	}
+	if history[1].CurrentTask != "task-2" {
+		t.Errorf("expected task-2 as second after prune, got %q", history[1].CurrentTask)
+	}
+}
+
+func TestPruneNoopWhenUnderLimit(t *testing.T) {
+	tmp := t.TempDir()
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Write 3 snapshots → 2 in history
+	for i := 0; i < 3; i++ {
+		s := &Snapshot{
+			BifrostVersion: 1,
+			Timestamp:      base.Add(time.Duration(i) * time.Hour),
+			SourceTool:     "claude-code",
+			Project:        "test",
+			TokenPressure:  "low",
+			CurrentTask:    fmt.Sprintf("task-%d", i),
+			NextStep:       "next",
+		}
+		if err := Write(tmp, s); err != nil {
+			t.Fatalf("Write %d: %v", i, err)
+		}
+	}
+
+	// Prune with a limit larger than history — nothing should be removed
+	if err := Prune(tmp, 10); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+
+	history, err := History(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history entries unchanged, got %d", len(history))
+	}
+}
+
+func TestWritePrunesAutomatically(t *testing.T) {
+	tmp := t.TempDir()
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Write DefaultMaxHistory+2 snapshots so history would exceed the limit
+	for i := 0; i <= DefaultMaxHistory+1; i++ {
+		s := &Snapshot{
+			BifrostVersion: 1,
+			Timestamp:      base.Add(time.Duration(i) * time.Hour),
+			SourceTool:     "claude-code",
+			Project:        "test",
+			TokenPressure:  "low",
+			CurrentTask:    fmt.Sprintf("task-%d", i),
+			NextStep:       "next",
+		}
+		if err := Write(tmp, s); err != nil {
+			t.Fatalf("Write %d: %v", i, err)
+		}
+	}
+
+	history, err := History(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) > DefaultMaxHistory {
+		t.Errorf("expected at most %d history entries after auto-prune, got %d", DefaultMaxHistory, len(history))
 	}
 }
