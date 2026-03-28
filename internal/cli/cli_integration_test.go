@@ -534,3 +534,59 @@ func TestExportInvalidFormat(t *testing.T) {
 		t.Error("export with invalid format should exit non-zero")
 	}
 }
+
+func TestStatusSnapshotSizeNormal(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "small task",
+		NextStep:       "next",
+	}
+	snapshot.Write(home, snap)
+
+	out, _, code := runBifrost(t, home, "status", "--project", home)
+	if code != 0 {
+		t.Fatalf("status failed (exit %d): %s", code, out)
+	}
+
+	if !strings.Contains(out, "KB") {
+		t.Errorf("expected size in KB in output, got:\n%s", out)
+	}
+}
+
+func TestStatusSnapshotSizeWarning(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+
+	// Build a snapshot large enough to trigger the >10KB warning
+	decisions := make([]string, 200)
+	for i := range decisions {
+		decisions[i] = strings.Repeat("x", 60)
+	}
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "high",
+		CurrentTask:    "large task",
+		NextStep:       "next",
+		Decisions:      decisions,
+	}
+	snapshot.Write(home, snap)
+
+	out, _, code := runBifrost(t, home, "status", "--project", home)
+	if code != 0 {
+		t.Fatalf("status failed (exit %d): %s", code, out)
+	}
+
+	if !strings.Contains(out, "large snapshot") {
+		t.Errorf("expected large snapshot warning in output, got:\n%s", out)
+	}
+}

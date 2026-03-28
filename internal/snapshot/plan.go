@@ -591,11 +591,17 @@ func parsePlanReviewNotes(section string) []ReviewNote {
 	return notes
 }
 
+// staleLockAge is the threshold after which a lock file is considered abandoned.
+const staleLockAge = 30 * time.Second
+
 // acquireLock creates a lock file and returns an unlock function.
-// Uses O_CREATE|O_EXCL for atomic creation. Retries briefly on contention.
+// Uses O_CREATE|O_EXCL for atomic creation. Stale locks (>30s) are removed
+// and retried immediately. Active locks cause a clear error after brief retries.
 func acquireLock(lockPath string) (func(), error) {
-	// Try to create lock file atomically
-	for attempts := 0; attempts < 10; attempts++ {
+	const maxAttempts = 5
+	const retryInterval = 50 * time.Millisecond
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err == nil {
 			f.Close()
@@ -604,20 +610,23 @@ func acquireLock(lockPath string) (func(), error) {
 		if !os.IsExist(err) {
 			return nil, err
 		}
-		// Check if lock is stale (older than 30 seconds)
+
+		// Lock file exists — check if it is stale.
 		info, statErr := os.Stat(lockPath)
-		if statErr != nil || time.Since(info.ModTime()) > 30*time.Second {
+		if statErr != nil || time.Since(info.ModTime()) > staleLockAge {
+			// Stale or unreadable — remove and retry immediately.
 			os.Remove(lockPath)
 			continue
 		}
-		time.Sleep(50 * time.Millisecond)
+
+		// Active lock held by another process. Wait briefly and retry.
+		time.Sleep(retryInterval)
 	}
-	// Force-remove stale lock after retries exhausted
-	os.Remove(lockPath)
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire lock after retries: %w", err)
-	}
-	f.Close()
-	return func() { os.Remove(lockPath) }, nil
+
+	// Retries exhausted with an active lock still present — report clearly.
+	return nil, fmt.Errorf(
+		"plan is locked by another process\n"+
+			"  If this is a stale lock, remove it manually: rm %s",
+		lockPath,
+	)
 }
