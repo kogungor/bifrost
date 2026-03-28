@@ -24,8 +24,12 @@ func TestOpenCodePaths(t *testing.T) {
 	if a.CommandsDir() != "/home/user/.opencode/commands" {
 		t.Errorf("unexpected commands dir: %s", a.CommandsDir())
 	}
-	if a.MCPConfigPath() != "opencode.json" {
-		t.Errorf("unexpected MCP config: %s", a.MCPConfigPath())
+	wantMCP := "/home/user/.opencode/opencode.json"
+	if a.MCPConfigPath() != wantMCP {
+		t.Errorf("MCPConfigPath() = %s; want %s", a.MCPConfigPath(), wantMCP)
+	}
+	if !filepath.IsAbs(a.MCPConfigPath()) {
+		t.Errorf("MCPConfigPath() returned relative path: %s", a.MCPConfigPath())
 	}
 }
 
