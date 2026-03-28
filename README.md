@@ -8,6 +8,8 @@
 
 A session context bridge between AI coding tools. Write `/handoff` in one tool, `/handin` in another. Continue exactly where you left off. Create implementation plans with `/plan` in one tool, get critical analysis with `/review` in another.
 
+![Bifrost demo — handoff and handin across tools](demo.gif)
+
 ---
 
 ## The Problem
@@ -387,6 +389,8 @@ The reviewer approves in the next round:
 
   Plan is now active. Work can begin.
 ```
+
+![Bifrost demo — plan, review, and consensus across tools](demo-plan.gif)
 
 If the review cycle stalls after the maximum number of revisions (default: 3), the planner can override:
 
