@@ -5,12 +5,17 @@
 ### Added
 
 - **Snapshot history retention limit** — `.bifrost/history/` is automatically pruned to the 50 most recent entries after each `/handoff`. Oldest snapshots are removed first. The limit is exposed as `DefaultMaxHistory = 50` in the snapshot package.
+- **Snapshot size indicator in `bifrost status`** — shows snapshot size in KB. Warns at >5 KB ("consider trimming") and >10 KB ("large snapshot, consider trimming decisions or environment notes").
 - **Plan consensus mechanism** — two-party approval flow before a plan becomes active. Reviewer submits `approved` or `needs_revision` via `/review`; planner revises with `/plan --revise`; deadlock auto-detected after `max_revisions` (default 3); force-accept escape hatch via `/plan --force-accept`.
 - **`plan_version` tracking** — increments on every content edit; each review note is tied to the plan version it reviewed. Editing an approved plan automatically resets consensus and returns to draft.
 - **Deadlock detection** — automatic when `revision_count >= max_revisions` with unresolved `needs_revision`. Returns `deadlock_detected: true` and `deadlock_reason` in response.
 - **Reviewer identity** — `source_tool` param on `bifrost_update_plan`; review notes now carry `from`, `at`, `plan_version`, and `outcome`.
 - **`bifrost_list_plans`** — now returns `consensus_state`, `revision_count`, `deadlock_detected`, `latest_review_outcome` per plan.
 - **`bifrost export`** — plan export now includes all consensus fields and enriched review notes.
+
+### Fixed
+
+- **Plan lock conflict now reports clearly** — previously, `WritePlan` would silently force-remove an active lock after retries and proceed. Now returns an explicit error: `"plan is locked by another process"` with the lock path for manual removal. Stale locks (>30s) are still cleared automatically.
 
 ### Changed
 
