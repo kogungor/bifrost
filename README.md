@@ -425,7 +425,7 @@ bifrost export --format all       # snapshot + plans
 
 ### Snapshot History
 
-Every `/handoff` automatically archives the previous snapshot. View and restore them:
+Every `/handoff` automatically archives the previous snapshot. History is capped at 50 entries — oldest snapshots are pruned automatically. View and restore them:
 
 ```bash
 bifrost history
