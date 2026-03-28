@@ -952,3 +952,67 @@ func TestLatestReviewOutcome(t *testing.T) {
 		t.Errorf("expected approved, got %q", p.LatestReviewOutcome())
 	}
 }
+
+func TestAcquireLockSuccess(t *testing.T) {
+	tmp := t.TempDir()
+	lockPath := filepath.Join(tmp, "test.plan.lock")
+
+	unlock, err := acquireLock(lockPath)
+	if err != nil {
+		t.Fatalf("acquireLock failed: %v", err)
+	}
+
+	// Lock file should exist while held
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Error("lock file should exist while held")
+	}
+
+	unlock()
+
+	// Lock file should be removed after unlock
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Error("lock file should be removed after unlock")
+	}
+}
+
+func TestAcquireLockStaleLockIsCleared(t *testing.T) {
+	tmp := t.TempDir()
+	lockPath := filepath.Join(tmp, "test.plan.lock")
+
+	// Create a stale lock file (mtime in the past)
+	if err := os.WriteFile(lockPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	staleTime := time.Now().Add(-(staleLockAge + time.Second))
+	if err := os.Chtimes(lockPath, staleTime, staleTime); err != nil {
+		t.Fatal(err)
+	}
+
+	// acquireLock should remove the stale lock and succeed
+	unlock, err := acquireLock(lockPath)
+	if err != nil {
+		t.Fatalf("acquireLock should succeed on stale lock, got: %v", err)
+	}
+	unlock()
+}
+
+func TestAcquireLockActiveLockReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	lockPath := filepath.Join(tmp, "test.plan.lock")
+
+	// Hold the lock with a fresh mtime
+	if err := os.WriteFile(lockPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := acquireLock(lockPath)
+	if err == nil {
+		t.Fatal("expected error when lock is actively held")
+	}
+	if !strings.Contains(err.Error(), "locked by another process") {
+		t.Errorf("expected 'locked by another process' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), lockPath) {
+		t.Errorf("expected lock path in error message, got: %v", err)
+	}
+}
