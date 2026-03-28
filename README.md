@@ -396,12 +396,13 @@ REST API for the mobile app. Currently in beta.
 | `bifrost install`            | Register slash commands for detected AI tools  |
 | `bifrost install --mcp`      | Also register Bifrost as an MCP server        |
 | `bifrost init`               | Initialize Bifrost in the current project     |
-| `bifrost status`             | Show the current bridge state                 |
+| `bifrost status`             | Show snapshot age, size, intent, and active plan |
 | `bifrost export`             | Export snapshot and/or plans as JSON to stdout |
 | `bifrost doctor`             | Diagnose installation and configuration       |
 | `bifrost history`            | List archived snapshots                       |
 | `bifrost restore <n>`        | Restore a historical snapshot                 |
-| `bifrost update`             | Check for updates                             |
+| `bifrost update`             | Show update instructions for the latest release |
+| `bifrost update --check`     | Check if a newer version is available         |
 | `bifrost version`            | Print version                                 |
 | `bifrost completion <shell>` | Generate shell completions (bash, zsh, fish)  |
 
