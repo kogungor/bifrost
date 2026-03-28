@@ -48,6 +48,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	age := formatAge(snap.Timestamp)
 	ui.Section("Snapshot", fmt.Sprintf(".bifrost/session.md  (%s)", age))
+
+	if info, err := os.Stat(snapshot.SessionPath(root)); err == nil {
+		sizeKB := info.Size() / 1024
+		switch {
+		case sizeKB > 10:
+			ui.Warning(fmt.Sprintf("Size        %d KB — large snapshot, consider trimming decisions or environment notes", sizeKB))
+		case sizeKB >= 5:
+			ui.Section("Size", fmt.Sprintf("%d KB  (consider trimming if context is tight)", sizeKB))
+		default:
+			ui.Section("Size", fmt.Sprintf("%d KB", sizeKB))
+		}
+	}
+
 	if snap.SessionIntent != "" {
 		ui.Section("Intent", snap.SessionIntent)
 	}

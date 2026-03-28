@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kogungor/bifrost/internal/adapters"
+	"github.com/kogungor/bifrost/internal/project"
 	"github.com/kogungor/bifrost/internal/snapshot"
 	"github.com/kogungor/bifrost/internal/ui"
 	"github.com/spf13/cobra"
@@ -21,7 +22,10 @@ var doctorCmd = &cobra.Command{
 	RunE:  runDoctor,
 }
 
+var doctorFix bool
+
 func init() {
+	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Attempt to fix detected issues automatically")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -60,8 +64,17 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			if !handinOK {
 				missing = append(missing, "handin.md")
 			}
-			ui.Error(fmt.Sprintf("%-20s missing: %s", a.DisplayName(), strings.Join(missing, ", ")),
-				"Run 'bifrost install' to register commands.")
+			if doctorFix {
+				if err := installAdapterCommands(a); err != nil {
+					ui.Error(fmt.Sprintf("%-20s fix failed", a.DisplayName()), err.Error())
+				} else {
+					ui.Success(fmt.Sprintf("%-20s commands registered  (%s)  [fixed]", a.DisplayName(), cmdsDir))
+					issues--
+				}
+			} else {
+				ui.Error(fmt.Sprintf("%-20s missing: %s", a.DisplayName(), strings.Join(missing, ", ")),
+					fmt.Sprintf("Run 'bifrost install --adapter %s' to register, or 'bifrost doctor --fix'.", a.Name()))
+			}
 		}
 
 		// MCP check — recommended for /handin (falls back to direct file read without it)
@@ -70,7 +83,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			if isMCPConfigured(mcpPath) {
 				ui.Success(fmt.Sprintf("%-20s MCP server registered", a.DisplayName()))
 			} else {
-				ui.Warning(fmt.Sprintf("%-20s MCP server not registered (optional — run 'bifrost install --mcp' to enable)", a.DisplayName()))
+				if doctorFix {
+					if err := installMCPConfig(a, mcpPath); err != nil {
+						ui.Warning(fmt.Sprintf("%-20s MCP fix failed: %s", a.DisplayName(), err.Error()))
+					} else {
+						ui.Success(fmt.Sprintf("%-20s MCP server registered  [fixed]", a.DisplayName()))
+					}
+				} else {
+					ui.Warning(fmt.Sprintf("%-20s MCP server not registered (optional — run 'bifrost install --mcp' to enable)", a.DisplayName()))
+				}
 			}
 		}
 	}
@@ -83,7 +104,17 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		if fileExists(configPath) {
 			ui.Success("Project              BIFROST.md found")
 		} else {
-			ui.Warning("Project              no BIFROST.md (optional — run 'bifrost init' to create)")
+			if doctorFix {
+				name := filepath.Base(root)
+				content := fmt.Sprintf(bifrostMdTemplate, name, name)
+				if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+					ui.Warning(fmt.Sprintf("Project              BIFROST.md fix failed: %s", err.Error()))
+				} else {
+					ui.Success("Project              BIFROST.md created  [fixed]")
+				}
+			} else {
+				ui.Warning("Project              no BIFROST.md (optional — run 'bifrost init' to create)")
+			}
 		}
 
 		// Snapshot
@@ -112,19 +143,44 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				ui.Success("Gitignore            .bifrost/ excluded")
 			} else {
 				issues++
-				ui.Error("Gitignore            .bifrost/ not excluded",
-					"Run 'bifrost init' to add it, or add '.bifrost/' to .gitignore manually.")
+				if doctorFix {
+					if _, err := project.EnsureGitignore(root); err != nil {
+						ui.Error("Gitignore            fix failed", err.Error())
+					} else {
+						ui.Success("Gitignore            .bifrost/ excluded  [fixed]")
+						issues--
+					}
+				} else {
+					ui.Error("Gitignore            .bifrost/ not excluded",
+						"Run 'bifrost init' to add it, or 'bifrost doctor --fix'.")
+				}
 			}
 		} else {
-			ui.Warning("Gitignore            no .gitignore found")
+			if doctorFix {
+				if _, err := project.EnsureGitignore(root); err != nil {
+					ui.Warning(fmt.Sprintf("Gitignore            could not create .gitignore: %s", err.Error()))
+				} else {
+					ui.Success("Gitignore            .gitignore created with .bifrost/ excluded  [fixed]")
+				}
+			} else {
+				ui.Warning("Gitignore            no .gitignore found")
+			}
 		}
 	}
 
 	ui.Blank()
 	if issues == 0 {
-		ui.Plain("All checks passed.")
+		if doctorFix {
+			ui.Plain("All checks passed.")
+		} else {
+			ui.Plain("All checks passed.")
+		}
 	} else {
-		ui.Plain(fmt.Sprintf("%d issue(s) found. See above for fixes.", issues))
+		if doctorFix {
+			ui.Plain(fmt.Sprintf("%d issue(s) could not be fixed automatically. See above.", issues))
+		} else {
+			ui.Plain(fmt.Sprintf("%d issue(s) found. Run 'bifrost doctor --fix' to attempt automatic fixes.", issues))
+		}
 	}
 
 	return nil

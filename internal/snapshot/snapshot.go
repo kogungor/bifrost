@@ -99,6 +99,8 @@ func Write(projectRoot string, s *Snapshot) error {
 		if err := Archive(projectRoot); err != nil {
 			return err
 		}
+		// Prune oldest entries, keeping at most DefaultMaxHistory. Best-effort.
+		_ = Prune(projectRoot, DefaultMaxHistory)
 	}
 
 	data := Render(s)
