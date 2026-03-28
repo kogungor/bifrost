@@ -1,5 +1,9 @@
 # Bifrost
 
+[![CI](https://github.com/kogungor/bifrost/actions/workflows/ci.yml/badge.svg)](https://github.com/kogungor/bifrost/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kogungor/bifrost)](https://goreportcard.com/report/github.com/kogungor/bifrost)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > When tokens run dry, the bridge holds.
 
 A session context bridge between AI coding tools. Write `/handoff` in one tool, `/handin` in another. Continue exactly where you left off. Create implementation plans with `/plan` in one tool, get critical analysis with `/review` in another.
@@ -399,6 +403,7 @@ REST API for the mobile app. Currently in beta.
 | `bifrost status`             | Show snapshot age, size, intent, and active plan |
 | `bifrost export`             | Export snapshot and/or plans as JSON to stdout |
 | `bifrost doctor`             | Diagnose installation and configuration       |
+| `bifrost doctor --fix`       | Diagnose and automatically fix detected issues |
 | `bifrost history`            | List archived snapshots                       |
 | `bifrost restore <n>`        | Restore a historical snapshot                 |
 | `bifrost update`             | Show update instructions for the latest release |
