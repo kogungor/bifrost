@@ -18,6 +18,7 @@ Bu doküman, projenin mevcut durumunu analiz ederek tespit edilen eksiklikleri v
 | 8 | `bifrost doctor --fix` Modu | UX | Yüksek | Düşük |
 | 9 | GitHub Actions Badge | Güven | Çok düşük | Düşük |
 | 10 | "It works!" Kanıtı | Güven | Düşük | Düşük |
+| 11 | `internal/cli` Test Coverage | Kod kalitesi | Orta | Orta |
 
 ---
 
@@ -642,6 +643,81 @@ The next session picks up immediately:
 ```
 
 Bu bölümü bir gerçek session'dan alınan gerçek çıktıyla doldur. Uydurma değil — gerçek bir `/handin` briefing çıktısını kopyala.
+
+---
+
+## 11. `internal/cli` Test Coverage
+
+### Problem
+
+`go test -cover` ile ölçüldüğünde `internal/cli` paketi **%4.6** coverage gösteriyor. Bu paketin tüm CLI komutlarını (`install`, `doctor`, `status`, `history`, `restore`, `export`) barındırdığı düşünüldüğünde kritik bir açık.
+
+**Neden bu kadar düşük:**
+
+`cli_integration_test.go` testleri binary'yi ayrı bir process olarak çalıştırıyor (`exec.Command(binaryPath, ...)`). Go'nun coverage aracı o process'in içini göremez, sadece aynı process içindeki kodu sayar. Sonuç: testler çalışıyor, ama coverage sayacı tetiklenmiyor.
+
+### Çözüm
+
+Go 1.20 ile gelen `-cover` build flag'i kullanılarak binary coverage-instrumented olarak build edilebilir. Mevcut integration testlerin hiçbiri değiştirilmeden coverage toplanır.
+
+**Adım 1:** `TestMain` içindeki build komutuna `-cover` ekle:
+
+```go
+// internal/cli/cli_integration_test.go
+func TestMain(m *testing.M) {
+    tmp, err := os.MkdirTemp("", "bifrost-test-*")
+    // ...
+    binaryPath = filepath.Join(tmp, "bifrost")
+
+    // -cover flag ile build — coverage instrumentation aktif
+    cmd := exec.Command("go", "build", "-cover", "-o", binaryPath, "../../cmd/bifrost")
+    cmd.Stderr = os.Stderr
+    if err := cmd.Run(); err != nil {
+        panic("failed to build bifrost: " + err.Error())
+    }
+
+    // Coverage verilerinin yazılacağı dizin
+    coverDir = filepath.Join(tmp, "coverage")
+    os.MkdirAll(coverDir, 0755)
+
+    code := m.Run()
+
+    // Coverage raporunu stdout'a yaz (opsiyonel, CI için)
+    exec.Command("go", "tool", "covdata", "percent", "-i", coverDir).Run()
+
+    os.RemoveAll(tmp)
+    os.Exit(code)
+}
+
+var coverDir string
+```
+
+**Adım 2:** `runBifrost` fonksiyonuna `GOCOVERDIR` env var ekle:
+
+```go
+func runBifrost(t *testing.T, projectDir string, args ...string) (string, string, int) {
+    t.Helper()
+    cmd := exec.Command(binaryPath, args...)
+    cmd.Dir = projectDir
+    cmd.Env = append(os.Environ(),
+        "HOME="+projectDir,
+        "NO_COLOR=1",
+        "GOCOVERDIR="+coverDir, // coverage verisi buraya yazılır
+    )
+    // ... rest unchanged
+}
+```
+
+**Adım 3:** Sonucu doğrula:
+
+```bash
+go test ./internal/cli/... -cover
+# Beklenen: coverage: 60%+ of statements
+```
+
+**Beklenen etki:** Mevcut 30+ integration test değiştirilmeden `internal/cli` coverage'ı %4.6'dan %60+ seviyesine çıkar. Ek test yazmak gerekmez.
+
+**Not:** `GOCOVERDIR` dizini her test çalıştırmasında temizlenmeli, aksi halde eski veriler birikir ve yanlış sonuç verir.
 
 ---
 
