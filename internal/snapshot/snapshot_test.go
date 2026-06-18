@@ -389,7 +389,7 @@ func TestActiveFileConfidenceRoundTrip(t *testing.T) {
 		NextStep:       "next",
 		ActiveFiles: []ActiveFile{
 			{Path: "a.go", Note: "done", Confidence: "high"},
-			{Path: "b.go", Note: "partial"},             // no confidence
+			{Path: "b.go", Note: "partial"}, // no confidence
 			{Path: "c.go", Note: "stub", Confidence: "low"},
 		},
 	}
@@ -411,6 +411,48 @@ func TestActiveFileConfidenceRoundTrip(t *testing.T) {
 	}
 	if read.ActiveFiles[2].Confidence != "low" {
 		t.Errorf("expected low, got %q", read.ActiveFiles[2].Confidence)
+	}
+}
+
+func TestRenderSnapshotGolden(t *testing.T) {
+	s := &Snapshot{
+		BifrostVersion: 2,
+		Timestamp:      time.Date(2026, 6, 18, 10, 22, 33, 0, time.UTC),
+		SourceTool:     "claude-code",
+		Project:        "bifrost",
+		TokenPressure:  "high",
+		SessionIntent:  "implementing",
+		ActivePlanName: "integrity-pack",
+		GitSHA:         "abc123def456",
+		SessionStart:   "2026-06-18T09:00:00Z",
+		CurrentTask:    "Implement JSON-backed integrity foundation",
+		Status: []string{
+			"- [x] Repo audit complete",
+			"- [-] Golden tests in progress",
+			"- [ ] JSON schema not started",
+		},
+		ActiveFiles: []ActiveFile{
+			{Path: "internal/snapshot/snapshot.go", Note: "compatibility model", Confidence: "high"},
+			{Path: "internal/snapshot/parse.go", Note: "Markdown parser and renderer", Confidence: "medium"},
+		},
+		Decisions: []string{
+			"- Keep Markdown readable during JSON migration",
+			"- Treat snapshot.v2 schema separately from bifrost_version",
+		},
+		EnvNotes:      []string{"- Run go test ./... from repo root"},
+		NextStep:      "Add JSON schema structs without changing current Markdown behavior.",
+		Assumptions:   []string{"- Existing slash commands continue to prefer MCP when available"},
+		OpenQuestions: []string{"- Should session.json be written by default in the first JSON phase?"},
+		Risks:         []string{"- Breaking existing session.md parsing would break current handin fallback"},
+	}
+
+	got := Render(s)
+	wantBytes, err := os.ReadFile(filepath.Join("testdata", "snapshot_render.golden.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(wantBytes) {
+		t.Fatalf("snapshot render mismatch\n--- got ---\n%s\n--- want ---\n%s", got, string(wantBytes))
 	}
 }
 
