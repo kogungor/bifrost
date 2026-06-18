@@ -137,6 +137,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				"recommended_next_action",
 				"do not use `--fix`",
 				"fall back to `.bifrost/session.md`",
+				"implementation/tests/security/architecture/freshness/evidence",
 			} {
 				if !strings.Contains(handin, want) {
 					t.Errorf("installed handin.md missing %q", want)
@@ -829,7 +830,20 @@ func TestRenderSnapshotJSON(t *testing.T) {
 		NextStep:       "inspect Markdown",
 		Status:         []string{"- [x] JSON written"},
 	}
-	if err := snapshot.WriteSnapshotV2(home, snapshot.SnapshotToV2(home, snap)); err != nil {
+	v2 := snapshot.SnapshotToV2(home, snap)
+	v2.ActiveFiles = []snapshot.ActiveFileV2{{
+		Path: "src/auth.go",
+		Note: "token validation",
+		Trust: snapshot.TrustV2{
+			Implementation: "medium",
+			Tests:          "low",
+			Security:       "low",
+			Architecture:   "medium",
+			Freshness:      "stale",
+			Evidence:       "weak",
+		},
+	}}
+	if err := snapshot.WriteSnapshotV2(home, v2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -839,6 +853,9 @@ func TestRenderSnapshotJSON(t *testing.T) {
 	}
 	if !strings.Contains(out, "# Session Snapshot") || !strings.Contains(out, "render JSON") {
 		t.Errorf("unexpected render output:\n%s", out)
+	}
+	if !strings.Contains(out, "[trust: implementation=medium, tests=low, security=low, architecture=medium, freshness=stale, evidence=weak]") {
+		t.Errorf("render output missing trust summary:\n%s", out)
 	}
 }
 
