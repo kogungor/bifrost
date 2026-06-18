@@ -111,7 +111,7 @@ func validPlanV2() *PlanV2 {
 					Required: true,
 					Commands: []string{"go test ./internal/snapshot"},
 					LastResult: &CommandResultRefV2{
-						State:       "pass",
+						State:       "failed",
 						Command:     "go test ./internal/snapshot",
 						ExitCode:    0,
 						CapturedAt:  now,
@@ -214,6 +214,50 @@ func TestSnapshotV2PreservesRootUnknownFields(t *testing.T) {
 func TestValidatePlanV2Valid(t *testing.T) {
 	if err := ValidatePlanV2(validPlanV2()); err != nil {
 		t.Fatalf("ValidatePlanV2 returned error: %v", err)
+	}
+}
+
+func TestValidateSnapshotV2AllowsWeakEvidenceTrust(t *testing.T) {
+	s := validSnapshotV2()
+	s.ActiveFiles[0].Trust.Evidence = "weak"
+	if err := ValidateSnapshotV2(s); err != nil {
+		t.Fatalf("weak evidence trust should be valid: %v", err)
+	}
+}
+
+func TestValidateSnapshotV2RejectsUnsafePaths(t *testing.T) {
+	s := validSnapshotV2()
+	s.ActiveFiles[0].Path = "../secret"
+	s.Observed.Files[0].Path = "/abs/path"
+	err := ValidateSnapshotV2(s)
+	if err == nil {
+		t.Fatal("expected unsafe path validation error")
+	}
+	fields := validationFields(err.(*ValidationError))
+	if !fields["active_files[0].path"] || !fields["observed.files[0].path"] {
+		t.Fatalf("expected unsafe path fields, got %v", fields)
+	}
+}
+
+func TestValidateSnapshotV2AllowsDotsInsidePathSegment(t *testing.T) {
+	s := validSnapshotV2()
+	s.ActiveFiles[0].Path = "docs/v1..v2.md"
+	s.Observed.Files[0].Path = "internal/snapshot/schema_v2.go"
+	if err := ValidateSnapshotV2(s); err != nil {
+		t.Fatalf("path with dots inside a segment should be valid: %v", err)
+	}
+}
+
+func TestValidatePlanV2RejectsTraversalExpectedFiles(t *testing.T) {
+	p := validPlanV2()
+	p.Steps[0].ExpectedFiles = []string{"internal/../secret.go", `C:\secret.go`}
+	err := ValidatePlanV2(p)
+	if err == nil {
+		t.Fatal("expected unsafe expected_files validation error")
+	}
+	fields := validationFields(err.(*ValidationError))
+	if !fields["steps[0].expected_files[0]"] || !fields["steps[0].expected_files[1]"] {
+		t.Fatalf("expected unsafe expected_files fields, got %v", fields)
 	}
 }
 

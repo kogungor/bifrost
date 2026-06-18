@@ -755,6 +755,31 @@ func TestRenderSnapshotJSON(t *testing.T) {
 	}
 }
 
+func TestRenderExplicitSnapshotJSONDoesNotRequireProject(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "medium",
+		CurrentTask:    "render explicit JSON",
+		NextStep:       "inspect Markdown",
+	}
+	if err := snapshot.WriteSnapshotV2(home, snapshot.SnapshotToV2(home, snap)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, work, "render", "--snapshot", snapshot.SnapshotJSONPath(home))
+	if code != 0 {
+		t.Fatalf("render explicit snapshot exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "render explicit JSON") {
+		t.Errorf("unexpected render output:\n%s", out)
+	}
+}
+
 func TestExportUsesSnapshotJSONWhenPresent(t *testing.T) {
 	home := t.TempDir()
 	markdownSnap := &snapshot.Snapshot{
@@ -817,6 +842,9 @@ func TestExportUsesPlanJSONWhenPresent(t *testing.T) {
 	}
 	if !strings.Contains(out, `"title": "JSON Plan"`) {
 		t.Errorf("export should use plan JSON when present:\n%s", out)
+	}
+	if !strings.Contains(out, `"source_tool": "claude-code"`) || !strings.Contains(out, `"project": "test"`) {
+		t.Errorf("export should preserve plan JSON source/project metadata:\n%s", out)
 	}
 	if strings.Contains(out, "Markdown Plan") {
 		t.Errorf("export should not duplicate legacy plan when JSON exists:\n%s", out)
