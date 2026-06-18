@@ -585,6 +585,20 @@ func WriteSnapshotV2(projectRoot string, s *SnapshotV2) error {
 	if err != nil {
 		return err
 	}
+	if redacted, err := redactBeforeWrite(projectRoot, string(data)); err != nil {
+		return err
+	} else if redacted != string(data) {
+		s.Integrity.RedactionApplied = true
+		data, err = json.MarshalIndent(s, "", "  ")
+		if err != nil {
+			return err
+		}
+		redacted, err = redactBeforeWrite(projectRoot, string(data))
+		if err != nil {
+			return err
+		}
+		data = []byte(redacted)
+	}
 	data = append(data, '\n')
 	tmp := SnapshotJSONPath(projectRoot) + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil {

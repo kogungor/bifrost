@@ -196,6 +196,29 @@ func TestVerifySnapshotV2DetectsSecretLikeValues(t *testing.T) {
 	}
 }
 
+func TestVerifySnapshotV2HonorsSecurityAllowlist(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(Dir(root), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(Dir(root), "config.json"), []byte(`{"security":{"allowlist":["bearer_token"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snap := verifyBaseSnapshot()
+	snap.Evidence = []EvidenceV2{{
+		ID:         "ev_secret",
+		Type:       EvidenceTypeManualNote,
+		Source:     "test",
+		ObservedAt: snap.CapturedAt,
+		Summary:    "Bearer abcdefghijklmnopqrstuvwxyz123456",
+	}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "security.secrets", VerifyPass) {
+		t.Fatalf("expected allowlisted secret pass: %+v", result.Checks)
+	}
+}
+
 func verifyBaseSnapshot() *SnapshotV2 {
 	now := time.Now().UTC().Truncate(time.Second)
 	return &SnapshotV2{

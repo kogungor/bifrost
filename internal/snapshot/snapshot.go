@@ -94,6 +94,11 @@ func Write(projectRoot string, s *Snapshot) error {
 		return err
 	}
 
+	data, err := redactBeforeWrite(projectRoot, Render(s))
+	if err != nil {
+		return err
+	}
+
 	// Archive previous snapshot if it exists
 	if _, err := os.Stat(SessionPath(projectRoot)); err == nil {
 		if err := Archive(projectRoot); err != nil {
@@ -102,8 +107,6 @@ func Write(projectRoot string, s *Snapshot) error {
 		// Prune oldest entries, keeping at most DefaultMaxHistory. Best-effort.
 		_ = Prune(projectRoot, DefaultMaxHistory)
 	}
-
-	data := Render(s)
 
 	// Atomic write: temp file then rename
 	tmp := SessionPath(projectRoot) + ".tmp"
