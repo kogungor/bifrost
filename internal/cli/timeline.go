@@ -11,6 +11,7 @@ import (
 var timelineCmd = &cobra.Command{
 	Use:   "timeline",
 	Short: "Show local Bifrost integrity events",
+	Long:  "Shows local snapshot, verify, restore, and plan events from .bifrost/timeline.jsonl. Events contain compact metadata only; secret-like values are redacted before writing.",
 	RunE:  runTimeline,
 }
 

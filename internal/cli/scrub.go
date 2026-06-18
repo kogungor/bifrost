@@ -16,6 +16,7 @@ import (
 var scrubCmd = &cobra.Command{
 	Use:   "scrub",
 	Short: "Check or redact secret-like values in Bifrost local state",
+	Long:  "Checks or redacts secret-like values in local Bifrost files. Use --history to include archived snapshots; raw secret values are not printed.",
 	RunE:  runScrub,
 }
 

@@ -14,6 +14,7 @@ import (
 var promoteCmd = &cobra.Command{
 	Use:   "promote [type]",
 	Short: "Promote session knowledge into BIFROST.md with explicit acceptance",
+	Long:  "Promotes durable knowledge such as decisions, risks, commands, package managers, and conventions into BIFROST.md. Use --dry-run first, then --accept <id|all>.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runPromote,
 }
