@@ -138,6 +138,8 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				"do not use `--fix`",
 				"fall back to `.bifrost/session.md`",
 				"implementation/tests/security/architecture/freshness/evidence",
+				"bifrost brief --mode implement --budget 5000",
+				"same non-destructive verification checks",
 				"bifrost plan status <active_plan_name>",
 				"Health        <plan health score if available>",
 			} {
@@ -1387,6 +1389,55 @@ func TestDoctorSecurityReportsSecretsWithoutLeakingValue(t *testing.T) {
 	}
 	if strings.Contains(out, "abcdefghijklmnopqrstuvwxyz123456") {
 		t.Fatalf("doctor --security leaked secret value:\n%s", out)
+	}
+}
+
+func TestBriefCommandJSONAndBudget(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	snap := &snapshot.SnapshotV2{
+		SchemaVersion: snapshot.SnapshotSchemaV2,
+		ID:            "snap_brief_cli",
+		Project:       snapshot.ProjectRefV2{Name: "brief", Root: home},
+		CapturedAt:    now,
+		Source:        snapshot.SourceV2{Tool: "test"},
+		Session: snapshot.SessionStateV2{
+			Task:     "Implement compact briefing",
+			NextStep: "Inspect active files",
+		},
+		Interpretation: snapshot.InterpretationV2{
+			OpenQuestions: []snapshot.OpenQuestionV2{{ID: "q1", Text: "Should high severity stay visible?", Severity: "high"}},
+		},
+		ActiveFiles: []snapshot.ActiveFileV2{
+			{Path: "a.go", Note: "first file"},
+			{Path: "b.go", Note: "second file"},
+		},
+		Integrity: snapshot.SnapshotIntegrityV2{VerifyStatus: "not_run"},
+	}
+	if err := snapshot.WriteSnapshotV2(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "brief", "--mode", "implement", "--budget", "320", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("brief --json failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, `"mode": "implement"`) || !strings.Contains(out, "Should high severity stay visible?") {
+		t.Fatalf("brief JSON missing expected content:\n%s", out)
+	}
+	if !strings.Contains(out, `"omitted"`) {
+		t.Fatalf("brief JSON should report omitted context under budget:\n%s", out)
+	}
+}
+
+func TestBriefRejectsInvalidMode(t *testing.T) {
+	home := t.TempDir()
+	out, _, code := runBifrost(t, home, "brief", "--mode", "typo", "--project", home)
+	if code == 0 {
+		t.Fatalf("brief invalid mode should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "Invalid brief mode") {
+		t.Fatalf("brief invalid mode missing actionable error:\n%s", out)
 	}
 }
 
