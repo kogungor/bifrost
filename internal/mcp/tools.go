@@ -8,6 +8,7 @@ import (
 	"math"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,9 +17,9 @@ import (
 
 // Input size limits to prevent resource exhaustion.
 const (
-	maxFieldLen    = 10000 // max chars per text field
-	maxArrayItems  = 100   // max items per array field
-	maxNoteLen     = 50000 // max chars for handoff note
+	maxFieldLen   = 10000 // max chars per text field
+	maxArrayItems = 100   // max items per array field
+	maxNoteLen    = 50000 // max chars for handoff note
 )
 
 // ToolDefinition describes a tool for tools/list.
@@ -43,7 +44,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        "bifrost_read_snapshot",
-			Description: "Read the current Bifrost session snapshot. Returns all fields: task, status, active files (with confidence), decisions, environment notes, next step, session intent, active plan name, git SHA, assumptions, open questions, risks, and handoff note.",
+			Description: "Read the current Bifrost session snapshot. Returns legacy Markdown fields plus v2 JSON integrity state when available: observed facts, evidence, trust signals, command summaries, active plan, risks, questions, and handoff note.",
 			InputSchema: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -51,7 +52,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 		},
 		{
 			Name:        "bifrost_write_snapshot",
-			Description: "Write a new Bifrost session snapshot. Archives the previous snapshot automatically, fills in timestamp, project name, and git SHA. Accepts semantic enrichments: session_intent (planning|implementing|debugging|reviewing), assumptions, open_questions, risks, active_plan_name, and confidence on each active file.",
+			Description: "Write a new Bifrost session snapshot. Archives the previous snapshot automatically, writes human-readable Markdown plus canonical session.json, collects git facts, redacts secret-like values, and accepts semantic fields, legacy confidence, command results, and manual/prebuilt evidence.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -78,8 +79,8 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
-								"path": map[string]any{"type": "string"},
-								"note": map[string]any{"type": "string"},
+								"path":       map[string]any{"type": "string"},
+								"note":       map[string]any{"type": "string"},
 								"confidence": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}, "description": "How certain the AI is about the file's state"},
 							},
 							"required": []string{"path"},
@@ -127,6 +128,52 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 						"type":        "array",
 						"items":       map[string]any{"type": "string"},
 						"description": "Known risks or blockers the incoming tool should be aware of",
+					},
+					"commands": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":          map[string]any{"type": "string"},
+								"command":     map[string]any{"type": "string"},
+								"exit_code":   map[string]any{"type": "number"},
+								"captured_at": map[string]any{"type": "string"},
+								"summary":     map[string]any{"type": "string"},
+								"test_result": map[string]any{"type": "boolean"},
+							},
+							"required": []string{"command", "exit_code"},
+						},
+						"description": "Caller-reported command results to record as evidence. Bifrost does not execute these commands.",
+					},
+					"evidence": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":          map[string]any{"type": "string"},
+								"type":        map[string]any{"type": "string"},
+								"source":      map[string]any{"type": "string"},
+								"observed_at": map[string]any{"type": "string"},
+								"summary":     map[string]any{"type": "string"},
+								"data":        map[string]any{"type": "object"},
+							},
+							"required": []string{"id", "type", "source", "observed_at"},
+						},
+						"description": "Optional prebuilt evidence records to attach to session.json.",
+					},
+					"manual_evidence": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":          map[string]any{"type": "string"},
+								"text":        map[string]any{"type": "string"},
+								"source":      map[string]any{"type": "string"},
+								"observed_at": map[string]any{"type": "string"},
+							},
+							"required": []string{"text"},
+						},
+						"description": "Explicit user or human notes to record as manual_note evidence.",
 					},
 				},
 				"required": []string{"source_tool", "current_task"},
@@ -342,7 +389,7 @@ func collectGitSHA(dir string) string {
 }
 
 func (ts *ToolSet) readSnapshot() (any, error) {
-	snap, err := snapshot.Read(ts.projectRoot)
+	snap, snapV2, err := ts.readSnapshotState()
 	if err != nil {
 		if errors.Is(err, snapshot.ErrNoSnapshot) {
 			return map[string]any{"found": false}, nil
@@ -389,8 +436,29 @@ func (ts *ToolSet) readSnapshot() (any, error) {
 	if handoffNote != "" {
 		result["handoff_note"] = handoffNote
 	}
+	if snapV2 != nil {
+		snapshotData := result["snapshot"].(map[string]any)
+		snapshotData["observed"] = snapV2.Observed
+		snapshotData["evidence"] = snapV2.Evidence
+		snapshotData["integrity"] = snapV2.Integrity
+	}
 
 	return result, nil
+}
+
+func (ts *ToolSet) readSnapshotState() (*snapshot.Snapshot, *snapshot.SnapshotV2, error) {
+	snapV2, err := snapshot.ReadSnapshotV2(ts.projectRoot)
+	if err == nil {
+		return snapshot.SnapshotFromV2(snapV2), snapV2, nil
+	}
+	if !errors.Is(err, snapshot.ErrNoSnapshot) {
+		return nil, nil, err
+	}
+	snap, err := snapshot.Read(ts.projectRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	return snap, nil, nil
 }
 
 // validSessionIntents is the set of allowed session_intent values.
@@ -405,12 +473,12 @@ var validConfidences = map[string]bool{
 
 // writeSnapshotParams maps the JSON input for bifrost_write_snapshot.
 type writeSnapshotParams struct {
-	SourceTool     string `json:"source_tool"`
-	TokenPressure  string `json:"token_pressure"`
-	SessionIntent  string `json:"session_intent"`
-	ActivePlanName string `json:"active_plan_name"`
-	SessionStart   string `json:"session_start"`
-	CurrentTask    string `json:"current_task"`
+	SourceTool     string   `json:"source_tool"`
+	TokenPressure  string   `json:"token_pressure"`
+	SessionIntent  string   `json:"session_intent"`
+	ActivePlanName string   `json:"active_plan_name"`
+	SessionStart   string   `json:"session_start"`
+	CurrentTask    string   `json:"current_task"`
 	Status         []string `json:"status"`
 	ActiveFiles    []struct {
 		Path       string `json:"path"`
@@ -423,6 +491,28 @@ type writeSnapshotParams struct {
 	Assumptions   []string `json:"assumptions"`
 	OpenQuestions []string `json:"open_questions"`
 	Risks         []string `json:"risks"`
+	Commands      []struct {
+		ID         string `json:"id"`
+		Command    string `json:"command"`
+		ExitCode   int    `json:"exit_code"`
+		CapturedAt string `json:"captured_at"`
+		Summary    string `json:"summary"`
+		TestResult bool   `json:"test_result"`
+	} `json:"commands"`
+	Evidence []struct {
+		ID         string         `json:"id"`
+		Type       string         `json:"type"`
+		Source     string         `json:"source"`
+		ObservedAt string         `json:"observed_at"`
+		Summary    string         `json:"summary"`
+		Data       map[string]any `json:"data"`
+	} `json:"evidence"`
+	ManualEvidence []struct {
+		ID         string `json:"id"`
+		Text       string `json:"text"`
+		Source     string `json:"source"`
+		ObservedAt string `json:"observed_at"`
+	} `json:"manual_evidence"`
 }
 
 func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
@@ -473,13 +563,24 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 	if len(params.Risks) > maxArrayItems {
 		return nil, fmt.Errorf("risks exceeds %d items", maxArrayItems)
 	}
+	if len(params.Commands) > maxArrayItems {
+		return nil, fmt.Errorf("commands exceeds %d items", maxArrayItems)
+	}
+	if len(params.Evidence) > maxArrayItems {
+		return nil, fmt.Errorf("evidence exceeds %d items", maxArrayItems)
+	}
+	if len(params.ManualEvidence) > maxArrayItems {
+		return nil, fmt.Errorf("manual_evidence exceeds %d items", maxArrayItems)
+	}
+	if err := validateEvidenceInputSizes(params); err != nil {
+		return nil, err
+	}
 
 	projectName := filepath.Base(ts.projectRoot)
 
 	var activeFiles []snapshot.ActiveFile
 	for _, f := range params.ActiveFiles {
-		// Reject paths with traversal or absolute paths
-		if strings.Contains(f.Path, "..") || filepath.IsAbs(f.Path) {
+		if !snapshot.IsSafeRelativePath(f.Path) {
 			return nil, fmt.Errorf("invalid file path: %s", f.Path)
 		}
 		if f.Confidence != "" && !validConfidences[f.Confidence] {
@@ -512,12 +613,167 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 	if err := snapshot.Write(ts.projectRoot, snap); err != nil {
 		return nil, err
 	}
+	v2 := snapshot.SnapshotToV2(ts.projectRoot, snap)
+	reportedCommands, err := reportedCommandsFromParams(params)
+	if err != nil {
+		return nil, err
+	}
+	manualEvidence, err := manualEvidenceFromParams(params)
+	if err != nil {
+		return nil, err
+	}
+	if err := snapshot.EnrichSnapshotV2WithOptions(ts.projectRoot, v2, snapshot.EnrichOptions{
+		ReportedCommands: reportedCommands,
+		ManualEvidence:   manualEvidence,
+	}); err != nil {
+		return nil, err
+	}
+	extraEvidence, err := evidenceFromParams(params)
+	if err != nil {
+		return nil, err
+	}
+	v2.Evidence = mergeSnapshotEvidenceForMCP(v2.Evidence, extraEvidence)
+	snapshot.ApplyTrustModelV2(v2)
+	if err := snapshot.WriteSnapshotV2(ts.projectRoot, v2); err != nil {
+		return nil, err
+	}
+	if err := snapshot.WriteEvidenceRecordsV2(ts.projectRoot, v2.Evidence); err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
-		"ok":        true,
-		"timestamp": snap.Timestamp.Format(time.RFC3339),
-		"project":   projectName,
+		"ok":             true,
+		"timestamp":      snap.Timestamp.Format(time.RFC3339),
+		"project":        projectName,
+		"evidence_count": len(v2.Evidence),
 	}, nil
+}
+
+func validateEvidenceInputSizes(params writeSnapshotParams) error {
+	for _, cmd := range params.Commands {
+		if len(cmd.ID) > 120 {
+			return fmt.Errorf("command id exceeds 120 characters")
+		}
+		if len(cmd.Command) > maxFieldLen {
+			return fmt.Errorf("command exceeds %d characters", maxFieldLen)
+		}
+		if len(cmd.Summary) > maxFieldLen {
+			return fmt.Errorf("command summary exceeds %d characters", maxFieldLen)
+		}
+	}
+	for _, ev := range params.Evidence {
+		if len(ev.ID) > 120 {
+			return fmt.Errorf("evidence id exceeds 120 characters")
+		}
+		if len(ev.Type) > 100 {
+			return fmt.Errorf("evidence type exceeds 100 characters")
+		}
+		if len(ev.Source) > 100 {
+			return fmt.Errorf("evidence source exceeds 100 characters")
+		}
+		if len(ev.Summary) > maxFieldLen {
+			return fmt.Errorf("evidence summary exceeds %d characters", maxFieldLen)
+		}
+	}
+	for _, note := range params.ManualEvidence {
+		if len(note.ID) > 120 {
+			return fmt.Errorf("manual_evidence id exceeds 120 characters")
+		}
+		if len(note.Source) > 100 {
+			return fmt.Errorf("manual_evidence source exceeds 100 characters")
+		}
+		if len(note.Text) > maxFieldLen {
+			return fmt.Errorf("manual_evidence text exceeds %d characters", maxFieldLen)
+		}
+	}
+	return nil
+}
+
+func reportedCommandsFromParams(params writeSnapshotParams) ([]snapshot.ReportedCommand, error) {
+	out := make([]snapshot.ReportedCommand, 0, len(params.Commands))
+	for _, cmd := range params.Commands {
+		capturedAt, err := parseOptionalTime(cmd.CapturedAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid command captured_at: %w", err)
+		}
+		out = append(out, snapshot.ReportedCommand{
+			ID:         cmd.ID,
+			Command:    cmd.Command,
+			ExitCode:   cmd.ExitCode,
+			CapturedAt: capturedAt,
+			Summary:    cmd.Summary,
+			TestResult: cmd.TestResult,
+		})
+	}
+	return out, nil
+}
+
+func manualEvidenceFromParams(params writeSnapshotParams) ([]snapshot.ManualEvidence, error) {
+	out := make([]snapshot.ManualEvidence, 0, len(params.ManualEvidence))
+	for _, note := range params.ManualEvidence {
+		observedAt, err := parseOptionalTime(note.ObservedAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid manual_evidence observed_at: %w", err)
+		}
+		out = append(out, snapshot.ManualEvidence{
+			ID:         note.ID,
+			Text:       note.Text,
+			Source:     note.Source,
+			ObservedAt: observedAt,
+		})
+	}
+	return out, nil
+}
+
+func evidenceFromParams(params writeSnapshotParams) ([]snapshot.EvidenceV2, error) {
+	out := make([]snapshot.EvidenceV2, 0, len(params.Evidence))
+	for _, item := range params.Evidence {
+		observedAt, err := parseOptionalTime(item.ObservedAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid evidence observed_at: %w", err)
+		}
+		ev := snapshot.EvidenceV2{
+			ID:         item.ID,
+			Type:       item.Type,
+			Source:     item.Source,
+			ObservedAt: observedAt,
+			Summary:    item.Summary,
+			Data:       item.Data,
+		}
+		if err := snapshot.ValidateEvidenceV2(&ev); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, nil
+}
+
+func parseOptionalTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, value)
+}
+
+func mergeSnapshotEvidenceForMCP(existing, incoming []snapshot.EvidenceV2) []snapshot.EvidenceV2 {
+	byID := map[string]snapshot.EvidenceV2{}
+	for _, ev := range existing {
+		byID[ev.ID] = ev
+	}
+	for _, ev := range incoming {
+		byID[ev.ID] = ev
+	}
+	out := make([]snapshot.EvidenceV2, 0, len(byID))
+	for _, ev := range byID {
+		out = append(out, ev)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ObservedAt.Equal(out[j].ObservedAt) {
+			return out[i].ObservedAt.After(out[j].ObservedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 // writeNoteParams maps the JSON input for bifrost_write_note.
@@ -559,10 +815,10 @@ func (ts *ToolSet) status() (any, error) {
 	projectName := filepath.Base(ts.projectRoot)
 
 	result := map[string]any{
-		"project":        projectName,
-		"has_snapshot":   false,
-		"has_handoff":    false,
-		"history_count":  0,
+		"project":       projectName,
+		"has_snapshot":  false,
+		"has_handoff":   false,
+		"history_count": 0,
 	}
 
 	snap, err := snapshot.Read(ts.projectRoot)
@@ -681,11 +937,11 @@ func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
 
 // writePlanParams maps the JSON input for bifrost_write_plan.
 type writePlanParams struct {
-	SourceTool  string `json:"source_tool"`
-	Title       string `json:"title"`
-	Name        string `json:"name"`
-	Goal        string `json:"goal"`
-	Steps       []struct {
+	SourceTool string `json:"source_tool"`
+	Title      string `json:"title"`
+	Name       string `json:"name"`
+	Goal       string `json:"goal"`
+	Steps      []struct {
 		Description string   `json:"description"`
 		Files       []string `json:"files"`
 	} `json:"steps"`
@@ -785,9 +1041,9 @@ func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
 
 // updatePlanParams maps the JSON input for bifrost_update_plan.
 type updatePlanParams struct {
-	Name       string `json:"name"`
-	SourceTool string `json:"source_tool"` // who is making this update (reviewer identity)
-	PlanStatus string `json:"plan_status"`
+	Name        string `json:"name"`
+	SourceTool  string `json:"source_tool"` // who is making this update (reviewer identity)
+	PlanStatus  string `json:"plan_status"`
 	ReviewNotes []struct {
 		From string `json:"from"`
 		Text string `json:"text"`

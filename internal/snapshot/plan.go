@@ -24,8 +24,8 @@ const (
 
 // Consensus states.
 const (
-	ConsensusNone      = "none"
-	ConsensusReached   = "reached"
+	ConsensusNone       = "none"
+	ConsensusReached    = "reached"
 	ConsensusOverridden = "overridden"
 )
 
@@ -51,12 +51,12 @@ type Plan struct {
 	Status         string    `yaml:"status"` // draft, active, completed, archived
 
 	// Consensus fields
-	PlanVersion      int    `yaml:"plan_version"`                  // increments on every content edit
-	ProposedBy       string `yaml:"proposed_by,omitempty"`          // source_tool that created the plan
-	MaxRevisions     int    `yaml:"max_revisions,omitempty"`        // deadlock threshold, default 3
-	RevisionCount    int    `yaml:"revision_count,omitempty"`       // how many revise cycles
-	ConsensusState   string `yaml:"consensus_state,omitempty"`      // none | reached | overridden
-	ActivationReason string `yaml:"activation_reason,omitempty"`    // consensus | force_accepted
+	PlanVersion      int    `yaml:"plan_version"`                // increments on every content edit
+	ProposedBy       string `yaml:"proposed_by,omitempty"`       // source_tool that created the plan
+	MaxRevisions     int    `yaml:"max_revisions,omitempty"`     // deadlock threshold, default 3
+	RevisionCount    int    `yaml:"revision_count,omitempty"`    // how many revise cycles
+	ConsensusState   string `yaml:"consensus_state,omitempty"`   // none | reached | overridden
+	ActivationReason string `yaml:"activation_reason,omitempty"` // consensus | force_accepted
 	DeadlockDetected bool   `yaml:"deadlock_detected,omitempty"`
 	DeadlockReason   string `yaml:"deadlock_reason,omitempty"`
 
@@ -206,6 +206,10 @@ func ReadPlan(projectRoot, name string) (*Plan, error) {
 
 // WritePlan writes a named plan atomically with file locking.
 func WritePlan(projectRoot, name string, p *Plan) error {
+	return writePlan(projectRoot, name, p, true)
+}
+
+func writePlan(projectRoot, name string, p *Plan, emitTimeline bool) error {
 	if err := EnsureDir(projectRoot); err != nil {
 		return err
 	}
@@ -232,7 +236,17 @@ func WritePlan(projectRoot, name string, p *Plan) error {
 	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if emitTimeline {
+		_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+			Type:   "plan.write",
+			Plan:   name,
+			Status: p.Status,
+		})
+	}
+	return nil
 }
 
 // DeletePlan removes a named plan file.

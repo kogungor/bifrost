@@ -13,8 +13,8 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show the current state of the bridge",
-	Long:  "Shows snapshot age, session intent, active plan, open question count, handoff note, snapshot history count, and project config status.",
+	Short: "Show the current Bifrost state",
+	Long:  "Shows snapshot age, canonical JSON availability, session intent, active plan, open question count, handoff note, snapshot history count, and project config status.",
 	RunE:  runStatus,
 }
 
@@ -47,7 +47,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	age := formatAge(snap.Timestamp)
-	ui.Section("Snapshot", fmt.Sprintf(".bifrost/session.md  (%s)", age))
+	snapshotFiles := ".bifrost/session.md"
+	if _, err := os.Stat(snapshot.SnapshotJSONPath(root)); err == nil {
+		snapshotFiles = ".bifrost/session.json + .bifrost/session.md"
+	}
+	ui.Section("Snapshot", fmt.Sprintf("%s  (%s)", snapshotFiles, age))
 
 	if info, err := os.Stat(snapshot.SessionPath(root)); err == nil {
 		sizeKB := info.Size() / 1024
