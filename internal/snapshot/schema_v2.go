@@ -388,19 +388,7 @@ func ValidateSnapshotV2(s *SnapshotV2) error {
 		}
 	}
 	for i, ev := range s.Evidence {
-		prefix := fmt.Sprintf("evidence[%d]", i)
-		if ev.ID == "" {
-			errs.add(prefix+".id", ev.ID, "non-empty evidence ID")
-		}
-		if ev.Type == "" {
-			errs.add(prefix+".type", ev.Type, "non-empty evidence type")
-		}
-		if ev.Source == "" {
-			errs.add(prefix+".source", ev.Source, "non-empty evidence source")
-		}
-		if ev.ObservedAt.IsZero() {
-			errs.add(prefix+".observed_at", ev.ObservedAt, "RFC3339 timestamp")
-		}
+		validateEvidenceRecord(errs, fmt.Sprintf("evidence[%d]", i), ev)
 	}
 	return errs.errOrNil()
 }
@@ -462,6 +450,23 @@ func validateTrust(errs *ValidationError, field string, trust TrustV2) {
 	validateOptionalEnum(errs, field+".architecture", trust.Architecture, validTrustLevels)
 	validateOptionalEnum(errs, field+".freshness", trust.Freshness, validFreshnessLevels)
 	validateOptionalEnum(errs, field+".evidence", trust.Evidence, validEvidenceTrustLevels)
+}
+
+func validateEvidenceRecord(errs *ValidationError, prefix string, ev EvidenceV2) {
+	if ev.ID == "" {
+		errs.add(prefix+".id", ev.ID, "non-empty evidence ID")
+	} else if !isSafeEvidenceID(ev.ID) {
+		errs.add(prefix+".id", ev.ID, "safe evidence ID")
+	}
+	if ev.Type == "" {
+		errs.add(prefix+".type", ev.Type, "non-empty evidence type")
+	}
+	if ev.Source == "" {
+		errs.add(prefix+".source", ev.Source, "non-empty evidence source")
+	}
+	if ev.ObservedAt.IsZero() {
+		errs.add(prefix+".observed_at", ev.ObservedAt, "RFC3339 timestamp")
+	}
 }
 
 func validateRequiredEnum(errs *ValidationError, field, value string, allowed map[string]bool) {
@@ -541,6 +546,12 @@ func isSafeRelativePath(path string) bool {
 	}
 	cleaned := pathpkg.Clean(normalized)
 	return cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../")
+}
+
+// IsSafeRelativePath reports whether path is a non-empty relative path that
+// cannot escape the project root.
+func IsSafeRelativePath(path string) bool {
+	return isSafeRelativePath(path)
 }
 
 // ReadSnapshotV2 reads and validates `.bifrost/session.json`.
