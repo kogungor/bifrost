@@ -28,10 +28,11 @@ func SnapshotToV2(projectRoot string, s *Snapshot) *SnapshotV2 {
 			BifrostVersion: fmt.Sprintf("%d", s.BifrostVersion),
 		},
 		Session: SessionStateV2{
-			Intent:   s.SessionIntent,
-			Pressure: s.TokenPressure,
-			Task:     s.CurrentTask,
-			NextStep: s.NextStep,
+			Intent:       s.SessionIntent,
+			Pressure:     s.TokenPressure,
+			Task:         s.CurrentTask,
+			NextStep:     s.NextStep,
+			SessionStart: s.SessionStart,
 		},
 		Interpretation: InterpretationV2{
 			StatusItems:      statusItemsToV2(s.Status),
@@ -76,6 +77,7 @@ func SnapshotFromV2(s *SnapshotV2) *Snapshot {
 		SessionIntent:  s.Session.Intent,
 		ActivePlanName: activePlanName,
 		GitSHA:         gitSHA,
+		SessionStart:   s.Session.SessionStart,
 		CurrentTask:    s.Session.Task,
 		Status:         statusItemsFromV2(s.Interpretation.StatusItems),
 		ActiveFiles:    activeFilesFromV2(s.ActiveFiles),
@@ -104,9 +106,12 @@ func PlanToV2(p *Plan, name string) *PlanV2 {
 		Goal:          p.Goal,
 		Status:        p.Status,
 		Version:       fmt.Sprintf("v%d", version),
+		Project:       ProjectRefV2{Name: p.Project},
+		Source:        SourceV2{Tool: p.SourceTool, BifrostVersion: fmt.Sprintf("%d", p.BifrostVersion)},
 		CreatedAt:     p.CreatedAt,
 		UpdatedAt:     p.UpdatedAt,
 		Steps:         planStepsToV2(p.Steps),
+		Consensus:     planConsensusToV2(p),
 		Review:        planReviewToV2(p.ReviewNotes),
 	}
 }
@@ -117,19 +122,57 @@ func PlanFromV2(p *PlanV2) *Plan {
 		return nil
 	}
 	return &Plan{
-		BifrostVersion: CurrentVersion,
-		CreatedAt:      p.CreatedAt,
-		UpdatedAt:      p.UpdatedAt,
-		SourceTool:     "bifrost",
-		Project:        p.Name,
-		Status:         p.Status,
-		PlanVersion:    1,
-		MaxRevisions:   3,
-		Title:          p.Title,
-		Goal:           p.Goal,
-		Steps:          planStepsFromV2(p.Steps),
-		ReviewNotes:    planReviewFromV2(p.Review),
+		BifrostVersion:   CurrentVersion,
+		CreatedAt:        p.CreatedAt,
+		UpdatedAt:        p.UpdatedAt,
+		SourceTool:       planSourceToolFromV2(p),
+		Project:          planProjectFromV2(p),
+		Status:           p.Status,
+		PlanVersion:      planVersionFromV2(p),
+		ProposedBy:       p.Consensus.ProposedBy,
+		MaxRevisions:     maxRevisionsFromV2(p),
+		RevisionCount:    p.Consensus.RevisionCount,
+		ConsensusState:   p.Consensus.ConsensusState,
+		ActivationReason: p.Consensus.ActivationReason,
+		DeadlockDetected: p.Consensus.DeadlockDetected,
+		DeadlockReason:   p.Consensus.DeadlockReason,
+		Title:            p.Title,
+		Goal:             p.Goal,
+		Steps:            planStepsFromV2(p.Steps),
+		ReviewNotes:      planReviewFromV2(p.Review),
 	}
+}
+
+func planSourceToolFromV2(p *PlanV2) string {
+	if p.Source.Tool != "" {
+		return p.Source.Tool
+	}
+	return "bifrost"
+}
+
+func planProjectFromV2(p *PlanV2) string {
+	if p.Project.Name != "" {
+		return p.Project.Name
+	}
+	return p.Name
+}
+
+func planVersionFromV2(p *PlanV2) int {
+	if p.Consensus.PlanVersion > 0 {
+		return p.Consensus.PlanVersion
+	}
+	var version int
+	if _, err := fmt.Sscanf(strings.TrimPrefix(p.Version, "v"), "%d", &version); err == nil && version > 0 {
+		return version
+	}
+	return 1
+}
+
+func maxRevisionsFromV2(p *PlanV2) int {
+	if p.Consensus.MaxRevisions > 0 {
+		return p.Consensus.MaxRevisions
+	}
+	return 3
 }
 
 func snapshotID(s *Snapshot) string {
@@ -403,15 +446,55 @@ func planReviewToV2(notes []ReviewNote) PlanReviewV2 {
 	for _, note := range notes {
 		if note.Text != "" {
 			out.Notes = append(out.Notes, note.Text)
+			out.Details = append(out.Details, ReviewNoteV2{
+				From:        note.From,
+				At:          note.At,
+				PlanVersion: note.PlanVersion,
+				Outcome:     note.Outcome,
+				Text:        note.Text,
+			})
 		}
 	}
 	return out
 }
 
 func planReviewFromV2(review PlanReviewV2) []ReviewNote {
+	if len(review.Details) > 0 {
+		out := make([]ReviewNote, 0, len(review.Details))
+		for _, note := range review.Details {
+			out = append(out, ReviewNote{
+				From:        fallbackString(note.From, "bifrost"),
+				At:          note.At,
+				PlanVersion: note.PlanVersion,
+				Outcome:     note.Outcome,
+				Text:        note.Text,
+			})
+		}
+		return out
+	}
 	out := make([]ReviewNote, 0, len(review.Notes))
 	for _, note := range review.Notes {
 		out = append(out, ReviewNote{From: "bifrost", Text: note})
 	}
 	return out
+}
+
+func planConsensusToV2(p *Plan) ConsensusV2 {
+	return ConsensusV2{
+		PlanVersion:      p.PlanVersion,
+		ProposedBy:       p.ProposedBy,
+		MaxRevisions:     p.MaxRevisions,
+		RevisionCount:    p.RevisionCount,
+		ConsensusState:   p.ConsensusState,
+		ActivationReason: p.ActivationReason,
+		DeadlockDetected: p.DeadlockDetected,
+		DeadlockReason:   p.DeadlockReason,
+	}
+}
+
+func fallbackString(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }

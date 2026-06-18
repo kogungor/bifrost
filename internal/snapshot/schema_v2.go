@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,10 +72,11 @@ type SourceV2 struct {
 }
 
 type SessionStateV2 struct {
-	Intent   string `json:"intent,omitempty"`
-	Pressure string `json:"pressure,omitempty"`
-	Task     string `json:"task"`
-	NextStep string `json:"next_step,omitempty"`
+	Intent       string `json:"intent,omitempty"`
+	Pressure     string `json:"pressure,omitempty"`
+	Task         string `json:"task"`
+	NextStep     string `json:"next_step,omitempty"`
+	SessionStart string `json:"session_start,omitempty"`
 }
 
 type ObservedV2 struct {
@@ -207,9 +209,12 @@ type PlanV2 struct {
 	Goal          string       `json:"goal"`
 	Status        string       `json:"status"`
 	Version       string       `json:"version"`
+	Project       ProjectRefV2 `json:"project,omitempty"`
+	Source        SourceV2     `json:"source,omitempty"`
 	CreatedAt     time.Time    `json:"created_at"`
 	UpdatedAt     time.Time    `json:"updated_at"`
 	Steps         []PlanStepV2 `json:"steps,omitempty"`
+	Consensus     ConsensusV2  `json:"consensus,omitempty"`
 	Review        PlanReviewV2 `json:"review,omitempty"`
 
 	Extra map[string]json.RawMessage `json:"-"`
@@ -238,8 +243,28 @@ type CommandResultRefV2 struct {
 }
 
 type PlanReviewV2 struct {
-	Outcome string   `json:"outcome,omitempty"`
-	Notes   []string `json:"notes,omitempty"`
+	Outcome string         `json:"outcome,omitempty"`
+	Notes   []string       `json:"notes,omitempty"`
+	Details []ReviewNoteV2 `json:"details,omitempty"`
+}
+
+type ReviewNoteV2 struct {
+	From        string    `json:"from,omitempty"`
+	At          time.Time `json:"at,omitempty"`
+	PlanVersion int       `json:"plan_version,omitempty"`
+	Outcome     string    `json:"outcome,omitempty"`
+	Text        string    `json:"text"`
+}
+
+type ConsensusV2 struct {
+	PlanVersion      int    `json:"plan_version,omitempty"`
+	ProposedBy       string `json:"proposed_by,omitempty"`
+	MaxRevisions     int    `json:"max_revisions,omitempty"`
+	RevisionCount    int    `json:"revision_count,omitempty"`
+	ConsensusState   string `json:"consensus_state,omitempty"`
+	ActivationReason string `json:"activation_reason,omitempty"`
+	DeadlockDetected bool   `json:"deadlock_detected,omitempty"`
+	DeadlockReason   string `json:"deadlock_reason,omitempty"`
 }
 
 // ValidationIssue describes one actionable schema validation issue.
@@ -340,10 +365,42 @@ func ValidateSnapshotV2(s *SnapshotV2) error {
 	}
 	for i, f := range s.ActiveFiles {
 		prefix := fmt.Sprintf("active_files[%d]", i)
-		if f.Path == "" {
-			errs.add(prefix+".path", f.Path, "non-empty relative path")
+		if !isSafeRelativePath(f.Path) {
+			errs.add(prefix+".path", f.Path, "non-empty relative path without traversal")
 		}
 		validateTrust(errs, prefix+".trust", f.Trust)
+	}
+	for i, f := range s.Observed.Files {
+		if !isSafeRelativePath(f.Path) {
+			errs.add(fmt.Sprintf("observed.files[%d].path", i), f.Path, "non-empty relative path without traversal")
+		}
+	}
+	for i, cmd := range s.Observed.Commands {
+		prefix := fmt.Sprintf("observed.commands[%d]", i)
+		if cmd.ID == "" {
+			errs.add(prefix+".id", cmd.ID, "non-empty command ID")
+		}
+		if cmd.Command == "" {
+			errs.add(prefix+".command", cmd.Command, "non-empty command")
+		}
+		if cmd.CapturedAt.IsZero() {
+			errs.add(prefix+".captured_at", cmd.CapturedAt, "RFC3339 timestamp")
+		}
+	}
+	for i, ev := range s.Evidence {
+		prefix := fmt.Sprintf("evidence[%d]", i)
+		if ev.ID == "" {
+			errs.add(prefix+".id", ev.ID, "non-empty evidence ID")
+		}
+		if ev.Type == "" {
+			errs.add(prefix+".type", ev.Type, "non-empty evidence type")
+		}
+		if ev.Source == "" {
+			errs.add(prefix+".source", ev.Source, "non-empty evidence source")
+		}
+		if ev.ObservedAt.IsZero() {
+			errs.add(prefix+".observed_at", ev.ObservedAt, "RFC3339 timestamp")
+		}
 	}
 	return errs.errOrNil()
 }
@@ -386,6 +443,11 @@ func ValidatePlanV2(p *PlanV2) error {
 			errs.add(prefix+".title", step.Title, "non-empty step title")
 		}
 		validateRequiredEnum(errs, prefix+".status", step.Status, validWorkStates)
+		for j, path := range step.ExpectedFiles {
+			if !isSafeRelativePath(path) {
+				errs.add(fmt.Sprintf("%s.expected_files[%d]", prefix, j), path, "non-empty relative path without traversal")
+			}
+		}
 		if step.Verification != nil && step.Verification.LastResult != nil {
 			validateRequiredEnum(errs, prefix+".verification.last_result.state", step.Verification.LastResult.State, validVerificationStates)
 		}
@@ -399,7 +461,7 @@ func validateTrust(errs *ValidationError, field string, trust TrustV2) {
 	validateOptionalEnum(errs, field+".security", trust.Security, validTrustLevels)
 	validateOptionalEnum(errs, field+".architecture", trust.Architecture, validTrustLevels)
 	validateOptionalEnum(errs, field+".freshness", trust.Freshness, validFreshnessLevels)
-	validateOptionalEnum(errs, field+".evidence", trust.Evidence, validTrustLevels)
+	validateOptionalEnum(errs, field+".evidence", trust.Evidence, validEvidenceTrustLevels)
 }
 
 func validateRequiredEnum(errs *ValidationError, field, value string, allowed map[string]bool) {
@@ -432,7 +494,7 @@ var validPlanStatuses = map[string]bool{
 }
 
 var validVerificationStates = map[string]bool{
-	"not_run": true, "pass": true, "warn": true, "fail": true, "unverified": true,
+	"not_run": true, "pass": true, "warn": true, "fail": true, "failed": true, "unverified": true,
 }
 
 var validVerifyStatuses = map[string]bool{
@@ -441,6 +503,10 @@ var validVerifyStatuses = map[string]bool{
 
 var validTrustLevels = map[string]bool{
 	"high": true, "medium": true, "low": true, "unknown": true,
+}
+
+var validEvidenceTrustLevels = map[string]bool{
+	"strong": true, "medium": true, "weak": true, "high": true, "low": true, "unknown": true,
 }
 
 var validFreshnessLevels = map[string]bool{
@@ -454,6 +520,27 @@ func mapKeys(m map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func isSafeRelativePath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || strings.Contains(path, "\x00") {
+		return false
+	}
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	if filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") {
+		return false
+	}
+	if len(normalized) >= 2 && normalized[1] == ':' {
+		return false
+	}
+	for _, part := range strings.Split(normalized, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	cleaned := pathpkg.Clean(normalized)
+	return cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../")
 }
 
 // ReadSnapshotV2 reads and validates `.bifrost/session.json`.
@@ -604,7 +691,7 @@ var snapshotV2KnownFields = []string{
 }
 
 var planV2KnownFields = []string{
-	"schema_version", "name", "title", "goal", "status", "version", "created_at", "updated_at", "steps", "review",
+	"schema_version", "name", "title", "goal", "status", "version", "project", "source", "created_at", "updated_at", "steps", "consensus", "review",
 }
 
 func mergeExtraFields(base []byte, extra map[string]json.RawMessage) ([]byte, error) {
