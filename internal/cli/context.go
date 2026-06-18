@@ -15,17 +15,20 @@ import (
 var contextCmd = &cobra.Command{
 	Use:   "context",
 	Short: "Analyze and update durable BIFROST.md project context",
+	Long:  "Analyzes BIFROST.md for missing, placeholder, stale, or contradictory durable project context and proposes explicit promotion candidates.",
 }
 
 var contextCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check BIFROST.md for missing durable project context",
+	Long:  "Checks BIFROST.md for expected sections, placeholders, contradictions, ignored promotion candidates, and detected durable context candidates.",
 	RunE:  runContextCheck,
 }
 
 var contextUpdateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Preview or apply BIFROST.md context updates",
+	Long:  "Previews or applies accepted BIFROST.md promotion candidates. Permanent updates require --accept <id|all>.",
 	RunE:  runContextUpdate,
 }
 

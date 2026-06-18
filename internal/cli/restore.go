@@ -13,6 +13,7 @@ import (
 var restoreCmd = &cobra.Command{
 	Use:   "restore [number]",
 	Short: "Restore a historical snapshot as the active one",
+	Long:  "Restores a historical snapshot from Markdown or JSON history. Use --preview to inspect the restore diff without modifying session files.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runRestore,
 }
