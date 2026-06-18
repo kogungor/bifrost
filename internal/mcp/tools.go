@@ -44,7 +44,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name:        "bifrost_read_snapshot",
-			Description: "Read the current Bifrost session snapshot. Returns all fields: task, status, active files (with confidence), decisions, environment notes, next step, session intent, active plan name, git SHA, assumptions, open questions, risks, and handoff note.",
+			Description: "Read the current Bifrost session snapshot. Returns legacy Markdown fields plus v2 JSON integrity state when available: observed facts, evidence, trust signals, command summaries, active plan, risks, questions, and handoff note.",
 			InputSchema: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -52,7 +52,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 		},
 		{
 			Name:        "bifrost_write_snapshot",
-			Description: "Write a new Bifrost session snapshot. Archives the previous snapshot automatically, fills in timestamp, project name, and git SHA. Accepts semantic enrichments: session_intent (planning|implementing|debugging|reviewing), assumptions, open_questions, risks, active_plan_name, and confidence on each active file.",
+			Description: "Write a new Bifrost session snapshot. Archives the previous snapshot automatically, writes human-readable Markdown plus canonical session.json, collects git facts, redacts secret-like values, and accepts semantic fields, legacy confidence, command results, and manual/prebuilt evidence.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

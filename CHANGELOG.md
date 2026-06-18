@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Canonical snapshot v2 JSON** — `.bifrost/session.json` now carries machine-readable session state while `.bifrost/session.md` remains the human-readable and backward-compatible handoff artifact.
+- **Schema validation, migration, and rendering** — `bifrost validate`, `bifrost migrate`, and `bifrost render` support v2 snapshots and plans without breaking legacy Markdown files.
+- **Observed facts and evidence anchors** — snapshots can separate collected repo facts from model interpretation, with git/file/project evidence attached to active files and status claims.
+- **Verification workflow** — `bifrost verify` and `/handin --verify` check snapshot age, branch and commit drift, active file freshness, claim evidence, unresolved risks/questions, plan health, and secret-like values.
+- **Trust model v2** — active files and plan/status items can distinguish `claimed_done` from `verified_done` and report implementation, tests, security, architecture, freshness, and evidence trust dimensions.
+- **Plan execution tracking** — plan JSON, step verification, plan health, `plan status`, `plan next`, `plan verify`, and `plan step` commands track claimed vs verified progress.
+- **Secret scanner and scrubber** — deterministic redaction runs before snapshot writes; `bifrost scrub` and `bifrost doctor --security` inspect and clean local Bifrost state.
+- **Mode-aware briefings** — `bifrost brief` generates compact implement/debug/review/plan/handoff summaries with omitted-context reporting.
+- **Project context workflow** — `bifrost context` and `bifrost promote` analyze `BIFROST.md` and propose user-approved durable context updates.
+- **Snapshot diff and timeline** — `bifrost diff`, `bifrost timeline`, and `restore --preview` expose local context changes without storing full file contents.
+
+### Changed
+
+- **`/handin` briefing model** — incoming agents now get explicit "Trust this", "Verify this first", and "Do not assume this" guidance when v2 state is available.
+- **MCP snapshot tools** — snapshot read/write tools remain backward-compatible with legacy confidence fields while supporting v2 JSON, evidence, command results, and manual evidence.
+- **Documentation and help text** — README, design docs, CLI help, and release metadata now describe Bifrost as a local context integrity layer, not only a session bridge.
+
 ## [0.9.0] — 2026-03-28
 
 ### Added
