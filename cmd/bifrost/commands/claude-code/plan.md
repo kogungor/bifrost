@@ -9,7 +9,12 @@ using the `bifrost_write_plan` MCP tool.
 Check `$ARGUMENTS` for mode flags before proceeding:
 - If `$ARGUMENTS` contains `--revise`: run in **revise mode** (Step 6)
 - If `$ARGUMENTS` contains `--force-accept`: run in **force-accept mode** (Step 7)
+- If `$ARGUMENTS` contains `--next`: run in **next-step mode** (Step 8)
+- If `$ARGUMENTS` contains `--verify`: run in **verify briefing mode** (Step 9)
 - Otherwise: run in **create mode** (Steps 1–5)
+
+For every mode, the plan name is the first non-flag word in `$ARGUMENTS`. If no
+plan name is given, use "plan".
 
 ---
 
@@ -122,5 +127,83 @@ The review process is deadlocked or blocked. Override consensus and activate the
 
   Review feedback was not fully resolved. Proceed with caution.
 ```
+
+---
+
+## Next-step mode (`/plan <name> --next`)
+
+Show the safest next plan action without modifying the plan.
+
+**Step 8 — Find next action**
+
+1. Read the plan using `bifrost_read_plan` with the plan name.
+2. If the plan is missing, tell the user to run `/plan <name>` first.
+3. Identify the first incomplete step. Prefer steps that are not blocked and
+   have the clearest expected files.
+4. If every step is complete, say there is no next implementation step.
+5. If a step is blocked, surface the blocking reason before recommending work.
+6. Print:
+
+```
+  Plan next action — <plan title>
+
+  Status      <plan status>
+  Progress    <completion %>% (<steps done>/<total> steps done)
+  Next step   <step description>
+  Files       <expected files for that step>
+  Caution     <blocked reason, unresolved review note, or "none">
+
+  Ask before changing files.
+```
+
+Do not update step status in this mode.
+
+---
+
+## Verify briefing mode (`/plan <name> --verify`)
+
+Give a read-only verification briefing for the plan. This mode does not run plan
+step commands and does not mark steps verified.
+
+**Step 9 — Verify plan context**
+
+1. Read the plan using `bifrost_read_plan` with the plan name.
+2. Read the current Bifrost snapshot using `bifrost_read_snapshot` if available
+   so you can compare the requested plan name with `active_plan_name`.
+3. Run `bifrost verify --json` if the CLI is available.
+4. If the command exits non-zero but prints JSON, still parse and use it.
+5. If verification cannot run, continue with the plan briefing and clearly say
+   the verification result is unavailable.
+6. If the requested plan name differs from the snapshot `active_plan_name`, say
+   that `bifrost verify` applies to the current snapshot/active plan, not
+   necessarily this named plan.
+7. Print:
+
+```
+  Plan verification briefing — <plan title>
+
+  Verify status   <pass, warn, fail, or unavailable>
+  Plan status     <plan status>
+  Progress        <completion %>% (<steps done>/<total> steps done)
+
+  Trust this
+  <plan facts and verify pass checks>
+
+  Verify first
+  <verify warn/fail checks related to stale git state, active files, risks, or questions>
+
+  Scope note
+  <whether verify applies to this named plan or only to the snapshot active plan>
+
+  Do not assume
+  <tests pass, files are unchanged, risks are resolved, or claims are evidence-backed unless verified>
+
+  Safe next action
+  <recommended_next_action from verify JSON, or first incomplete plan step>
+```
+
+Do not run destructive commands, do not use `--fix`, and do not update step
+status in this mode. Marking claimed or verified progress belongs to the plan
+execution workflow.
 
 The user's argument to this command is: $ARGUMENTS
