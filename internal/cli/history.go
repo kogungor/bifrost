@@ -30,7 +30,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	history, err := snapshot.History(root)
+	history, err := restoreHistory(root)
 	if err != nil {
 		ui.Error("Could not read history.", err.Error())
 		return err
@@ -57,9 +57,9 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	for i, snap := range history[:limit] {
-		ts := snap.Timestamp.Format("2006-01-02 15:04:05")
-		age := formatAge(snap.Timestamp)
-		task := snap.CurrentTask
+		ts := snap.timestamp().Format("2006-01-02 15:04:05")
+		age := formatAge(snap.timestamp())
+		task := snap.task()
 		if len(task) > 40 {
 			task = task[:37] + "..."
 		}
@@ -67,7 +67,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 			task = "(no task)"
 		}
 
-		ui.Plain(fmt.Sprintf("  %-3d %-22s %-13s %-14s %s", i+1, ts, age, snap.SourceTool, task))
+		ui.Plain(fmt.Sprintf("  %-3d %-22s %-13s %-14s %s", i+1, ts, age, snap.sourceTool(), task))
 	}
 
 	if len(history) > limit {

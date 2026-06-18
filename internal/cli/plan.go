@@ -124,6 +124,12 @@ func runPlanStep(cmd *cobra.Command, args []string) error {
 		ui.Error("Could not write plan.", err.Error())
 		return err
 	}
+	_ = snapshot.AppendTimelineEvent(root, snapshot.TimelineEvent{
+		Type:   "plan.step.update",
+		Plan:   plan.Name,
+		Step:   args[1],
+		Status: status,
+	})
 	ui.Success(fmt.Sprintf("Updated %s step %s to %s.", plan.Name, args[1], status))
 	return nil
 }
@@ -191,6 +197,15 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 		ui.Error("Could not write plan verification result.", err.Error())
 		return err
 	}
+	verifyStatus := "pass"
+	if failed > 0 {
+		verifyStatus = "fail"
+	}
+	_ = snapshot.AppendTimelineEvent(root, snapshot.TimelineEvent{
+		Type:   "plan.verify." + verifyStatus,
+		Plan:   plan.Name,
+		Status: verifyStatus,
+	})
 	if failed > 0 {
 		ui.Warning(fmt.Sprintf("Plan verification completed with %d failed command(s).", failed))
 		printPlanStatus(root, plan)
