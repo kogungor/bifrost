@@ -633,6 +633,7 @@ func (ts *ToolSet) writeSnapshot(args json.RawMessage) (any, error) {
 		return nil, err
 	}
 	v2.Evidence = mergeSnapshotEvidenceForMCP(v2.Evidence, extraEvidence)
+	snapshot.ApplyTrustModelV2(v2)
 	if err := snapshot.WriteSnapshotV2(ts.projectRoot, v2); err != nil {
 		return nil, err
 	}
