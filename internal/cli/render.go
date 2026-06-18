@@ -34,18 +34,19 @@ func runRender(cmd *cobra.Command, args []string) error {
 		ui.Error("Invalid render arguments.", err.Error())
 		return err
 	}
-	root, err := resolveProject()
-	if err != nil {
-		ui.Error("Could not determine project root.", err.Error())
-		return err
-	}
 
 	var rendered string
+	var err error
 	if renderPlanPath != "" {
 		rendered, err = renderPlanJSON(renderPlanPath)
 	} else {
 		path := renderSnapshotPath
 		if path == "" {
+			root, rootErr := resolveProject()
+			if rootErr != nil {
+				ui.Error("Could not determine project root.", rootErr.Error())
+				return rootErr
+			}
 			path = snapshot.SnapshotJSONPath(root)
 		}
 		rendered, err = renderSnapshotJSON(path)
