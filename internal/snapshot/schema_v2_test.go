@@ -261,6 +261,19 @@ func TestValidatePlanV2RejectsTraversalExpectedFiles(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotV2RejectsUnsafeEvidenceID(t *testing.T) {
+	s := validSnapshotV2()
+	s.Evidence[0].ID = "../ev_bad"
+	err := ValidateSnapshotV2(s)
+	if err == nil {
+		t.Fatal("expected unsafe evidence ID validation error")
+	}
+	fields := validationFields(err.(*ValidationError))
+	if !fields["evidence[0].id"] {
+		t.Fatalf("expected unsafe evidence ID field, got %v", fields)
+	}
+}
+
 func TestValidatePlanV2Invalid(t *testing.T) {
 	p := validPlanV2()
 	p.SchemaVersion = "plan.v1"

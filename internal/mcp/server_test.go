@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/kogungor/bifrost/internal/snapshot"
 )
 
 // rpc builds a JSON-RPC request line.
@@ -210,6 +213,123 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteSnapshotWithEvidenceFields(t *testing.T) {
+	dir := t.TempDir()
+	capturedAt := "2026-06-18T10:22:33Z"
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "claude-code",
+				"current_task": "record evidence",
+				"status":       []string{"- [x] tests run"},
+				"commands": []map[string]any{
+					{
+						"command":     "go test ./...",
+						"exit_code":   0,
+						"captured_at": capturedAt,
+						"summary":     "all packages pass",
+						"test_result": true,
+					},
+				},
+				"manual_evidence": []map[string]any{
+					{
+						"text":        "User confirmed command evidence can be trusted.",
+						"source":      "user",
+						"observed_at": capturedAt,
+					},
+				},
+				"evidence": []map[string]any{
+					{
+						"id":          "ev_manual_supplied",
+						"type":        "manual_note",
+						"source":      "user",
+						"observed_at": capturedAt,
+						"summary":     "supplied evidence",
+						"data":        map[string]any{"note": "ok"},
+					},
+				},
+			},
+		}),
+	)
+	if len(resps) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(resps))
+	}
+	if resps[0]["error"] != nil {
+		t.Fatalf("write snapshot failed: %+v", resps[0]["error"])
+	}
+
+	readResps := runServer(t, dir,
+		rpc(2, "tools/call", map[string]any{
+			"name": "bifrost_read_snapshot",
+		}),
+	)
+	result := readResps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+
+	snap := data["snapshot"].(map[string]any)
+	evidence, ok := snap["evidence"].([]any)
+	if !ok || len(evidence) == 0 {
+		t.Fatalf("expected evidence in read snapshot, got %+v", snap["evidence"])
+	}
+	if !mcpEvidenceHasType(evidence, "test_result") || !mcpEvidenceHasType(evidence, "manual_note") {
+		t.Fatalf("expected test_result/manual_note evidence, got %+v", evidence)
+	}
+	observed := snap["observed"].(map[string]any)
+	commands := observed["commands"].([]any)
+	if len(commands) != 1 {
+		t.Fatalf("expected one observed command, got %+v", commands)
+	}
+}
+
+func TestReadSnapshotPrefersJSONV2WhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	legacy := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		CurrentTask:    "legacy task",
+	}
+	if err := snapshot.Write(dir, legacy); err != nil {
+		t.Fatal(err)
+	}
+	v2 := snapshot.SnapshotToV2(dir, legacy)
+	v2.Session.Task = "json task"
+	v2.Evidence = []snapshot.EvidenceV2{{
+		ID:         "ev_test_json",
+		Type:       snapshot.EvidenceTypeManualNote,
+		Source:     "test",
+		ObservedAt: time.Now().UTC(),
+		Summary:    "json evidence",
+	}}
+	if err := snapshot.WriteSnapshotV2(dir, v2); err != nil {
+		t.Fatal(err)
+	}
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_read_snapshot",
+		}),
+	)
+	result := resps[0]["result"].(map[string]any)
+	content := result["content"].([]any)
+	text := content[0].(map[string]any)
+	var data map[string]any
+	json.Unmarshal([]byte(text["text"].(string)), &data)
+	snap := data["snapshot"].(map[string]any)
+	if snap["current_task"] != "json task" {
+		t.Fatalf("MCP read should prefer session.json, got task %v", snap["current_task"])
+	}
+	if evidence, ok := snap["evidence"].([]any); !ok || !mcpEvidenceHasType(evidence, snapshot.EvidenceTypeManualNote) {
+		t.Fatalf("expected JSON evidence in MCP read, got %+v", snap["evidence"])
+	}
+}
+
 func TestUnknownMethod(t *testing.T) {
 	dir := t.TempDir()
 	resps := runServer(t, dir, rpc(1, "unknown/method", nil))
@@ -227,6 +347,16 @@ func TestUnknownMethod(t *testing.T) {
 	if int(code) != ErrCodeMethodNotFound {
 		t.Errorf("error code = %v, want %d", code, ErrCodeMethodNotFound)
 	}
+}
+
+func mcpEvidenceHasType(evidence []any, typ string) bool {
+	for _, item := range evidence {
+		ev, ok := item.(map[string]any)
+		if ok && ev["type"] == typ {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInvalidParams(t *testing.T) {
@@ -1207,6 +1337,48 @@ func TestInvalidConfidenceRejected(t *testing.T) {
 	resp := resps[0]
 	if resp["error"] == nil {
 		t.Error("expected error for invalid confidence value, got none")
+	}
+}
+
+func TestActiveFilePathAllowsDotsInsideSegment(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "claude-code",
+				"current_task": "Task",
+				"active_files": []map[string]any{
+					{"path": "docs/v1..v2.md", "note": "valid path"},
+				},
+			},
+		}),
+	)
+
+	if resps[0]["error"] != nil {
+		t.Fatalf("path with dots inside a segment should be accepted: %+v", resps[0]["error"])
+	}
+}
+
+func TestInvalidActiveFilePathRejected(t *testing.T) {
+	dir := t.TempDir()
+
+	resps := runServer(t, dir,
+		rpc(1, "tools/call", map[string]any{
+			"name": "bifrost_write_snapshot",
+			"arguments": map[string]any{
+				"source_tool":  "claude-code",
+				"current_task": "Task",
+				"active_files": []map[string]any{
+					{"path": "../secret", "note": "invalid path"},
+				},
+			},
+		}),
+	)
+
+	if resps[0]["error"] == nil {
+		t.Error("expected error for traversal active file path")
 	}
 }
 
