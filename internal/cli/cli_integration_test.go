@@ -931,6 +931,112 @@ func TestSnapshotEnrichAndEvidenceCommands(t *testing.T) {
 	}
 }
 
+func TestVerifyWarnExitCodeAndStrictMode(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		CurrentTask:    "verify warnings",
+	}
+	if err := snapshot.WriteSnapshotV2(home, snapshot.SnapshotToV2(home, snap)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "verify", "--project", home)
+	if code != 0 {
+		t.Fatalf("verify warning should exit 0 without strict, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "git.status") {
+		t.Fatalf("expected git.status warning in output:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "verify", "--strict", "--project", home)
+	if code != 1 {
+		t.Fatalf("verify warning should exit 1 with strict, got %d:\n%s", code, out)
+	}
+}
+
+func TestVerifyJSONFailExitCode(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	snap := &snapshot.SnapshotV2{
+		SchemaVersion: snapshot.SnapshotSchemaV2,
+		ID:            "snap_verify_cli",
+		Project:       snapshot.ProjectRefV2{Name: "test", Root: home},
+		CapturedAt:    now,
+		Source:        snapshot.SourceV2{Tool: "claude-code"},
+		Session:       snapshot.SessionStateV2{Task: "verify failure"},
+		Interpretation: snapshot.InterpretationV2{
+			Risks: []snapshot.RiskV2{{ID: "risk_high", Text: "High risk", Severity: "high"}},
+		},
+		Integrity: snapshot.SnapshotIntegrityV2{VerifyStatus: "not_run"},
+	}
+	if err := snapshot.WriteSnapshotV2(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "verify", "--json", "--project", home)
+	if code != 2 {
+		t.Fatalf("verify failure should exit 2, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"status": "fail"`) || !strings.Contains(out, `"risks.unresolved_high"`) {
+		t.Fatalf("unexpected verify JSON output:\n%s", out)
+	}
+}
+
+func TestVerifyFixIsNonDestructive(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		CurrentTask:    "verify fix",
+	}
+	if err := snapshot.WriteSnapshotV2(home, snapshot.SnapshotToV2(home, snap)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(snapshot.SnapshotJSONPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "verify", "--fix", "--project", home)
+	if code != 0 {
+		t.Fatalf("verify --fix should keep warning exit 0 without strict, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "No safe automatic fixes are available yet") {
+		t.Fatalf("expected non-destructive fix message:\n%s", out)
+	}
+	after, err := os.ReadFile(snapshot.SnapshotJSONPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("verify --fix should not modify session.json")
+	}
+}
+
+func TestVerifyInvalidSnapshotJSONExitCode(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bifrost"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapshot.SnapshotJSONPath(home), []byte(`{"schema_version":"snapshot.v2"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "verify", "--project", home)
+	if code != 2 {
+		t.Fatalf("invalid session.json should exit 2, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Could not read snapshot") {
+		t.Fatalf("expected invalid snapshot message:\n%s", out)
+	}
+}
+
 func TestStatusSnapshotSizeNormal(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, ".git"), 0755)
