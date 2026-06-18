@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1438,6 +1439,178 @@ func TestBriefRejectsInvalidMode(t *testing.T) {
 	}
 	if !strings.Contains(out, "Invalid brief mode") {
 		t.Fatalf("brief invalid mode missing actionable error:\n%s", out)
+	}
+}
+
+func TestContextCheckUpdateAndPromote(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "go.mod"), []byte("module example.com/app\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "BIFROST.md"), []byte("# Project: app\n\n## Stack\n- [Runtime]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "context", "check", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("context check failed (exit %d):\n%s", code, out)
+	}
+	var report struct {
+		Candidates []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"candidates"`
+		Placeholders []string `json:"placeholders"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("invalid context JSON: %v\n%s", err, out)
+	}
+	hasGoTest := false
+	for _, candidate := range report.Candidates {
+		if candidate.Text == "go test ./..." {
+			hasGoTest = true
+		}
+	}
+	if len(report.Candidates) == 0 || !hasGoTest {
+		t.Fatalf("expected command candidate:\n%s", out)
+	}
+	if !containsString(report.Placeholders, "Stack") {
+		t.Fatalf("expected Stack placeholder:\n%s", out)
+	}
+
+	before, err := os.ReadFile(filepath.Join(home, "BIFROST.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, code = runBifrost(t, home, "context", "update", "--dry-run", "--project", home)
+	if code != 0 {
+		t.Fatalf("context update --dry-run failed (exit %d):\n%s", code, out)
+	}
+	after, err := os.ReadFile(filepath.Join(home, "BIFROST.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("dry-run modified BIFROST.md")
+	}
+	if !strings.Contains(out, "BIFROST.md patch preview") {
+		t.Fatalf("dry-run missing patch preview:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "context", "update", "--accept", "all", "--project", home)
+	if code != 0 {
+		t.Fatalf("context update --accept all failed (exit %d):\n%s", code, out)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "BIFROST.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "go test ./...") || !strings.Contains(string(data), "Package manager: go") {
+		t.Fatalf("accepted candidates not written:\n%s", string(data))
+	}
+}
+
+func TestPromoteIgnoreForever(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "go.mod"), []byte("module example.com/app\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runBifrost(t, home, "context", "check", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("context check failed (exit %d):\n%s", code, out)
+	}
+	var report struct {
+		Candidates []struct {
+			ID string `json:"id"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Candidates) == 0 {
+		t.Fatal("expected promotion candidates")
+	}
+	ignored := report.Candidates[0].ID
+	out, _, code = runBifrost(t, home, "promote", "--ignore-forever", ignored, "--project", home)
+	if code != 0 {
+		t.Fatalf("promote ignore forever failed (exit %d):\n%s", code, out)
+	}
+	if strings.Contains(out, "["+ignored+"]") {
+		t.Fatalf("ignored candidate should not appear in same-run patch:\n%s", out)
+	}
+	out, _, code = runBifrost(t, home, "context", "check", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("context check after ignore failed (exit %d):\n%s", code, out)
+	}
+	var after struct {
+		Candidates []struct {
+			ID string `json:"id"`
+		} `json:"candidates"`
+		Ignored []string `json:"ignored"`
+	}
+	if err := json.Unmarshal([]byte(out), &after); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range after.Candidates {
+		if candidate.ID == ignored {
+			t.Fatalf("ignored candidate still shown:\n%s", out)
+		}
+	}
+	if !containsString(after.Ignored, ignored) {
+		t.Fatalf("ignored candidate id not reported:\n%s", out)
+	}
+}
+
+func TestContextUpdateRejectsUnknownAcceptID(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "go.mod"), []byte("module example.com/app\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runBifrost(t, home, "context", "update", "--accept", "prom_missing", "--project", home)
+	if code == 0 {
+		t.Fatalf("context update with unknown id should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "Could not update BIFROST.md") {
+		t.Fatalf("missing actionable error for unknown accept id:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "context", "update", "--dry-run", "--accept", "prom_missing", "--project", home)
+	if code == 0 {
+		t.Fatalf("context update dry-run with unknown id should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "Could not preview BIFROST.md patch") || !strings.Contains(out, "prom_missing") {
+		t.Fatalf("missing actionable dry-run error for unknown accept id:\n%s", out)
+	}
+}
+
+func TestPromoteRejectsUnknownAcceptAndType(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "go.mod"), []byte("module example.com/app\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runBifrost(t, home, "promote", "--dry-run", "--accept", "prom_missing", "--project", home)
+	if code == 0 {
+		t.Fatalf("promote dry-run with unknown id should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "Could not preview promotion patch") || !strings.Contains(out, "prom_missing") {
+		t.Fatalf("missing actionable promote dry-run error:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "promote", "--accept", "   ", "--project", home)
+	if code == 0 {
+		t.Fatalf("promote with blank accept should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "missing accepted candidate id") {
+		t.Fatalf("missing blank accept error:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "promote", "unknown_type", "--project", home)
+	if code == 0 {
+		t.Fatalf("promote with unknown type should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "Invalid promotion type") || !strings.Contains(out, "expected one of") {
+		t.Fatalf("missing invalid type error:\n%s", out)
 	}
 }
 
