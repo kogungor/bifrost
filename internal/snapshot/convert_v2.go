@@ -90,6 +90,18 @@ func SnapshotFromV2(s *SnapshotV2) *Snapshot {
 	}
 }
 
+// SnapshotFromV2WithTrustSummary converts SnapshotV2 for human-readable
+// rendering where the Markdown should expose multidimensional trust. Use
+// SnapshotFromV2 for compatibility APIs that still expose legacy confidence.
+func SnapshotFromV2WithTrustSummary(s *SnapshotV2) *Snapshot {
+	out := SnapshotFromV2(s)
+	if out == nil {
+		return nil
+	}
+	out.ActiveFiles = activeFilesFromV2TrustSummary(s.ActiveFiles)
+	return out
+}
+
 // PlanToV2 converts a legacy Markdown plan into PlanV2.
 func PlanToV2(p *Plan, name string) *PlanV2 {
 	if p == nil {
@@ -212,7 +224,7 @@ func statusItemsFromV2(items []StatusItemV2) []string {
 		if item.Text == "" {
 			continue
 		}
-		out = append(out, renderChecklistState(item.State, item.Text))
+		out = append(out, renderStatusItemV2(item))
 	}
 	return out
 }
@@ -220,12 +232,18 @@ func statusItemsFromV2(items []StatusItemV2) []string {
 func parseChecklistState(item string) (string, string) {
 	text := strings.TrimSpace(strings.TrimPrefix(item, "- "))
 	switch {
+	case strings.HasPrefix(text, "[x?] "):
+		return stripStatusAnnotation(strings.TrimSpace(strings.TrimPrefix(text, "[x?] "))), "claimed_done"
 	case strings.HasPrefix(text, "[x] "):
-		return strings.TrimSpace(strings.TrimPrefix(text, "[x] ")), "claimed_done"
+		doneText := strings.TrimSpace(strings.TrimPrefix(text, "[x] "))
+		if before, _, ok := strings.Cut(doneText, " — verified by "); ok {
+			return strings.TrimSpace(before), "verified_done"
+		}
+		return stripStatusAnnotation(doneText), "claimed_done"
 	case strings.HasPrefix(text, "[-] "):
 		return strings.TrimSpace(strings.TrimPrefix(text, "[-] ")), "in_progress"
 	case strings.HasPrefix(text, "[!] "):
-		return strings.TrimSpace(strings.TrimPrefix(text, "[!] ")), "blocked"
+		return stripStatusAnnotation(strings.TrimSpace(strings.TrimPrefix(text, "[!] "))), "blocked"
 	case strings.HasPrefix(text, "[ ] "):
 		return strings.TrimSpace(strings.TrimPrefix(text, "[ ] ")), "not_started"
 	default:
@@ -233,11 +251,58 @@ func parseChecklistState(item string) (string, string) {
 	}
 }
 
-func renderChecklistState(state, text string) string {
-	switch state {
-	case "claimed_done", "verified_done":
+func stripStatusAnnotation(text string) string {
+	for _, marker := range []string{
+		" — claimed done, not verified",
+		" — verification failed: ",
+		" — verification failed",
+		" — verification warning: ",
+		" — verification warning",
+		" — blocked by ",
+		" — invalidated by ",
+	} {
+		if before, _, ok := strings.Cut(text, marker); ok {
+			return strings.TrimSpace(before)
+		}
+	}
+	return strings.TrimSpace(text)
+}
+
+func renderStatusItemV2(item StatusItemV2) string {
+	text := item.Text
+	switch item.State {
+	case "verified_done":
+		if item.Verification != nil && item.Verification.Reason != "" {
+			text += " — verified by " + item.Verification.Reason
+		}
 		return "- [x] " + text
-	case "blocked", "invalidated":
+	case "claimed_done":
+		switch {
+		case item.Verification == nil || item.Verification.State == "unverified" || item.Verification.State == "not_run":
+			text += " — claimed done, not verified"
+		case item.Verification.State == "fail" || item.Verification.State == "failed":
+			if item.Verification.Reason != "" {
+				text += " — verification failed: " + item.Verification.Reason
+			} else {
+				text += " — verification failed"
+			}
+		case item.Verification.State == "warn":
+			if item.Verification.Reason != "" {
+				text += " — verification warning: " + item.Verification.Reason
+			} else {
+				text += " — verification warning"
+			}
+		}
+		return "- [x?] " + text
+	case "blocked":
+		if item.Verification != nil && item.Verification.Reason != "" {
+			text += " — blocked by " + item.Verification.Reason
+		}
+		return "- [!] " + text
+	case "invalidated":
+		if item.Verification != nil && item.Verification.Reason != "" {
+			text += " — invalidated by " + item.Verification.Reason
+		}
 		return "- [!] " + text
 	case "not_started":
 		return "- [ ] " + text
@@ -251,9 +316,11 @@ func activeFilesToV2(files []ActiveFile) []ActiveFileV2 {
 	for _, file := range files {
 		trust := TrustV2{}
 		if file.Confidence != "" {
-			trust.Implementation = file.Confidence
-			trust.Evidence = "unknown"
-			trust.Freshness = "unknown"
+			if strings.Contains(file.Confidence, "=") {
+				trust = TrustFromSummary(file.Confidence)
+			} else {
+				trust = TrustFromLegacyConfidence(file.Confidence)
+			}
 		}
 		out = append(out, ActiveFileV2{Path: file.Path, Note: file.Note, Trust: trust})
 	}
@@ -269,7 +336,27 @@ func activeFilesFromV2(files []ActiveFileV2) []ActiveFile {
 }
 
 func legacyConfidence(trust TrustV2) string {
-	if trust.Implementation != "" && trust.Implementation != "unknown" {
+	trust = normalizeTrust(trust)
+	if trust.Implementation != "" && trust.Implementation != TrustUnknown {
+		return trust.Implementation
+	}
+	return ""
+}
+
+func activeFilesFromV2TrustSummary(files []ActiveFileV2) []ActiveFile {
+	out := make([]ActiveFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, ActiveFile{Path: file.Path, Note: file.Note, Confidence: trustSummaryConfidence(file.Trust)})
+	}
+	return out
+}
+
+func trustSummaryConfidence(trust TrustV2) string {
+	trust = normalizeTrust(trust)
+	if trust.Tests != TrustUnknown || trust.Security != TrustUnknown || trust.Architecture != TrustUnknown || trust.Freshness != TrustUnknown || trust.Evidence != EvidenceWeak {
+		return TrustSummary(trust)
+	}
+	if trust.Implementation != "" && trust.Implementation != TrustUnknown {
 		return trust.Implementation
 	}
 	return ""

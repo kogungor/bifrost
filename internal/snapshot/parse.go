@@ -112,7 +112,11 @@ func Render(s *Snapshot) string {
 	} else {
 		for _, f := range s.ActiveFiles {
 			if f.Confidence != "" {
-				b.WriteString(fmt.Sprintf("- `%s` — %s [confidence: %s]\n", f.Path, f.Note, f.Confidence))
+				label := "confidence"
+				if strings.Contains(f.Confidence, "=") {
+					label = "trust"
+				}
+				b.WriteString(fmt.Sprintf("- `%s` — %s [%s: %s]\n", f.Path, f.Note, label, f.Confidence))
 			} else {
 				b.WriteString(fmt.Sprintf("- `%s` — %s\n", f.Path, f.Note))
 			}
@@ -262,14 +266,15 @@ func parseActiveFiles(section string) []ActiveFile {
 			note = strings.TrimPrefix(after, " - ")
 		}
 
-		// Extract optional [confidence: X] suffix
+		// Extract optional [confidence: X] or [trust: X] suffix
 		confidence := ""
-		const confPrefix = " [confidence: "
-		if ci := strings.Index(note, confPrefix); ci >= 0 {
-			suffix := note[ci+len(confPrefix):]
-			if ei := strings.Index(suffix, "]"); ei >= 0 {
-				confidence = suffix[:ei]
-				note = note[:ci]
+		for _, prefix := range []string{" [confidence: ", " [trust: "} {
+			if ci := strings.Index(note, prefix); ci >= 0 {
+				suffix := note[ci+len(prefix):]
+				if ei := strings.Index(suffix, "]"); ei >= 0 {
+					confidence = suffix[:ei]
+					note = note[:ci]
+				}
 			}
 		}
 

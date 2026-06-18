@@ -81,6 +81,7 @@ func EnrichSnapshotV2WithOptions(projectRoot string, snap *SnapshotV2, opts Enri
 	modelClaimEvidence := annotateModelClaims(snap, now)
 	evidence = append(evidence, modelClaimEvidence...)
 	snap.Evidence = mergeEvidence(snap.Evidence, evidence)
+	ApplyTrustModelV2(snap)
 	return ValidateSnapshotV2(snap)
 }
 

@@ -81,7 +81,7 @@ func renderSnapshotJSON(path string) (string, error) {
 		ui.Error("Invalid snapshot schema.", err.Error())
 		return "", err
 	}
-	return snapshot.Render(snapshot.SnapshotFromV2(&snap)), nil
+	return snapshot.Render(snapshot.SnapshotFromV2WithTrustSummary(&snap)), nil
 }
 
 func renderPlanJSON(path string) (string, error) {
