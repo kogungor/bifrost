@@ -55,6 +55,15 @@ func runBifrost(t *testing.T, projectDir string, args ...string) (string, string
 	return stdout.String(), stderr.String(), exitCode
 }
 
+func containsString(items []string, value string) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
 // --- 8.1 Integration test: install on fresh temp home ---
 
 func TestInstallFreshHome(t *testing.T) {
@@ -848,6 +857,77 @@ func TestExportUsesPlanJSONWhenPresent(t *testing.T) {
 	}
 	if strings.Contains(out, "Markdown Plan") {
 		t.Errorf("export should not duplicate legacy plan when JSON exists:\n%s", out)
+	}
+}
+
+func TestSnapshotEnrichAndEvidenceCommands(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "go.mod"), []byte("module example.test/bifrost\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "internal"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "internal", "active.go"), []byte("package internal\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "medium",
+		CurrentTask:    "collect observed facts",
+		Status:         []string{"- [x] active file written"},
+		ActiveFiles:    []snapshot.ActiveFile{{Path: "internal/active.go", Note: "active file", Confidence: "medium"}},
+		NextStep:       "inspect evidence",
+	}
+	if err := snapshot.Write(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "snapshot", "--enrich", "--project", home)
+	if code != 0 {
+		t.Fatalf("snapshot --enrich exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Enriched snapshot") {
+		t.Fatalf("unexpected enrich output:\n%s", out)
+	}
+	enriched, err := snapshot.ReadSnapshotV2(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.Observed.Project == nil || !containsString(enriched.Observed.Project.CommandCandidates, "go test ./...") {
+		t.Fatalf("project observations not written: %+v", enriched.Observed.Project)
+	}
+	if len(enriched.Observed.Files) != 1 || len(enriched.ActiveFiles[0].EvidenceRefs) == 0 {
+		t.Fatalf("file observations/evidence refs not written: files=%+v active=%+v", enriched.Observed.Files, enriched.ActiveFiles)
+	}
+	var evidenceID string
+	for _, ev := range enriched.Evidence {
+		if ev.Type == snapshot.EvidenceTypeFileMetadata {
+			evidenceID = ev.ID
+			break
+		}
+	}
+	if evidenceID == "" {
+		t.Fatalf("file evidence missing: %+v", enriched.Evidence)
+	}
+
+	out, _, code = runBifrost(t, home, "evidence", "list", "--project", home)
+	if code != 0 {
+		t.Fatalf("evidence list exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, evidenceID) || !strings.Contains(out, snapshot.EvidenceTypeFileMetadata) {
+		t.Fatalf("evidence list missing file evidence:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "evidence", "show", evidenceID, "--project", home)
+	if code != 0 {
+		t.Fatalf("evidence show exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"id": "`+evidenceID+`"`) || !strings.Contains(out, `"type": "file_metadata"`) {
+		t.Fatalf("evidence show output unexpected:\n%s", out)
 	}
 }
 
