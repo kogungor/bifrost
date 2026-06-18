@@ -138,6 +138,8 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				"do not use `--fix`",
 				"fall back to `.bifrost/session.md`",
 				"implementation/tests/security/architecture/freshness/evidence",
+				"bifrost plan status <active_plan_name>",
+				"Health        <plan health score if available>",
 			} {
 				if !strings.Contains(handin, want) {
 					t.Errorf("installed handin.md missing %q", want)
@@ -1129,6 +1131,262 @@ func TestVerifyInvalidSnapshotJSONExitCode(t *testing.T) {
 	}
 	if !strings.Contains(out, "Could not read snapshot") {
 		t.Fatalf("expected invalid snapshot message:\n%s", out)
+	}
+}
+
+func TestPlanExecutionCommands(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &snapshot.PlanV2{
+		SchemaVersion: snapshot.PlanSchemaV2,
+		Name:          "release",
+		Title:         "Release Plan",
+		Goal:          "Ship safely",
+		Status:        snapshot.PlanStatusActive,
+		Version:       "v1",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Steps: []snapshot.PlanStepV2{
+			{
+				ID:            "step_1",
+				Title:         "Build package",
+				Status:        "claimed_done",
+				ExpectedFiles: []string{"missing.go"},
+				Verification: &snapshot.PlanStepVerificationV2{
+					Required: true,
+					Commands: []string{"go version"},
+				},
+			},
+			{ID: "step_2", Title: "Publish", Status: "not_started"},
+		},
+	}
+	if err := snapshot.WritePlanV2(home, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "plan", "status", "release", "--project", home)
+	if code != 0 {
+		t.Fatalf("plan status failed (exit %d):\n%s", code, out)
+	}
+	for _, want := range []string{"Health", "Claimed", "Missing files", "Next safest action"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("plan status missing %q:\n%s", want, out)
+		}
+	}
+
+	out, _, code = runBifrost(t, home, "plan", "next", "release", "--project", home)
+	if code != 0 {
+		t.Fatalf("plan next failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "Verify claimed step step_1") {
+		t.Fatalf("plan next did not recommend verifying claimed step:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "plan", "verify", "release", "--project", home)
+	if code != 0 {
+		t.Fatalf("plan verify failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "Plan verification passed") {
+		t.Fatalf("plan verify did not pass:\n%s", out)
+	}
+	read, err := snapshot.ReadPlanV2(home, "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Steps[0].Status != "verified_done" {
+		t.Fatalf("step status = %q, want verified_done", read.Steps[0].Status)
+	}
+	if read.Steps[0].Verification == nil || read.Steps[0].Verification.LastResult == nil || read.Steps[0].Verification.LastResult.EvidenceRef == "" {
+		t.Fatalf("missing verification evidence ref: %+v", read.Steps[0].Verification)
+	}
+	evidence, err := snapshot.ListEvidenceV2(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence) == 0 {
+		t.Fatal("expected plan verify to write evidence")
+	}
+
+	out, _, code = runBifrost(t, home, "plan", "step", "release", "step_2", "--blocked", "waiting for approval", "--project", home)
+	if code != 0 {
+		t.Fatalf("plan step failed (exit %d):\n%s", code, out)
+	}
+	read, err = snapshot.ReadPlanV2(home, "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Steps[1].Status != "blocked" || read.Steps[1].Verification.LastResult.Command != "waiting for approval" {
+		t.Fatalf("blocked step not persisted: %+v", read.Steps[1])
+	}
+}
+
+func TestPlanVerifyFailureExitCode(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &snapshot.PlanV2{
+		SchemaVersion: snapshot.PlanSchemaV2,
+		Name:          "failing",
+		Title:         "Failing Plan",
+		Goal:          "Record failure",
+		Status:        snapshot.PlanStatusActive,
+		Version:       "v1",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Steps: []snapshot.PlanStepV2{{
+			ID:     "step_1",
+			Title:  "Fail command",
+			Status: "claimed_done",
+			Verification: &snapshot.PlanStepVerificationV2{
+				Required: true,
+				Commands: []string{"exit 7"},
+			},
+		}},
+	}
+	if err := snapshot.WritePlanV2(home, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "plan", "verify", "failing", "--project", home)
+	if code != 2 {
+		t.Fatalf("plan verify failure should exit 2, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "failed command") {
+		t.Fatalf("expected failed command warning:\n%s", out)
+	}
+	read, err := snapshot.ReadPlanV2(home, "failing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Steps[0].Verification.LastResult.State != "fail" || read.Steps[0].Verification.LastResult.ExitCode != 7 {
+		t.Fatalf("failure not persisted: %+v", read.Steps[0].Verification.LastResult)
+	}
+	if read.Steps[0].Status != "invalidated" {
+		t.Fatalf("failing verification should invalidate step, got %q", read.Steps[0].Status)
+	}
+}
+
+func TestScrubCheckAndWriteRedactsBifrostState(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bifrost"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := snapshot.SessionPath(home)
+	raw := "token: Bearer abcdefghijklmnopqrstuvwxyz123456\n"
+	if err := os.WriteFile(sessionPath, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "scrub", "--check", "--project", home)
+	if code != 2 {
+		t.Fatalf("scrub --check exit = %d, want 2:\n%s", code, out)
+	}
+	if !strings.Contains(out, "bearer_token=1") {
+		t.Fatalf("scrub --check did not report bearer token without value:\n%s", out)
+	}
+	if strings.Contains(out, "abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("scrub output leaked secret value:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "scrub", "--write", "--project", home)
+	if code != 0 {
+		t.Fatalf("scrub --write exit = %d:\n%s", code, out)
+	}
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("scrub --write left raw secret: %s", string(data))
+	}
+	if !strings.Contains(string(data), "Bearer [REDACTED:bearer_token]") {
+		t.Fatalf("scrub --write did not write redaction marker: %s", string(data))
+	}
+}
+
+func TestScrubHistoryRequiresHistoryFlag(t *testing.T) {
+	home := t.TempDir()
+	historyDir := snapshot.HistoryDir(home)
+	if err := os.MkdirAll(historyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	historyPath := filepath.Join(historyDir, "2026-06-18T10-22-33Z.md")
+	raw := "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n"
+	if err := os.WriteFile(historyPath, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "scrub", "--check", "--project", home)
+	if code != 0 {
+		t.Fatalf("scrub without --history should ignore history, exit %d:\n%s", code, out)
+	}
+	out, _, code = runBifrost(t, home, "scrub", "--write", "--history", "--project", home)
+	if code != 0 {
+		t.Fatalf("scrub --write --history exit = %d:\n%s", code, out)
+	}
+	data, err := os.ReadFile(historyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-proj-abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("history secret was not redacted: %s", string(data))
+	}
+}
+
+func TestScrubIncludesPlanFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(snapshot.PlansDir(home), 0700); err != nil {
+		t.Fatal(err)
+	}
+	planPath := snapshot.PlanJSONPath(home, "secret-plan")
+	raw := `{"schema_version":"plan.v2","name":"secret-plan","title":"Secret","goal":"OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456","status":"active","version":"v1","created_at":"2026-06-18T10:22:33Z","updated_at":"2026-06-18T10:22:33Z"}`
+	if err := os.WriteFile(planPath, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "scrub", "--write", "--project", home)
+	if code != 0 {
+		t.Fatalf("scrub --write exit = %d:\n%s", code, out)
+	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-proj-abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("plan secret was not redacted: %s", string(data))
+	}
+	if !strings.Contains(out, ".bifrost/plans/secret-plan.json") {
+		t.Fatalf("scrub output did not mention plan file:\n%s", out)
+	}
+}
+
+func TestDoctorSecurityReportsSecretsWithoutLeakingValue(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bifrost"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	snap := &snapshot.Snapshot{
+		BifrostVersion: 1,
+		Timestamp:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "task",
+		NextStep:       "next",
+	}
+	raw := snapshot.Render(snap) + "\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz123456\n"
+	if err := os.WriteFile(snapshot.SessionPath(home), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "doctor", "--security", "--project", home)
+	if code != 0 {
+		t.Fatalf("doctor should keep reporting exit 0, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Security") || !strings.Contains(out, "bearer_token=1") {
+		t.Fatalf("doctor --security did not report secret finding:\n%s", out)
+	}
+	if strings.Contains(out, "abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("doctor --security leaked secret value:\n%s", out)
 	}
 }
 

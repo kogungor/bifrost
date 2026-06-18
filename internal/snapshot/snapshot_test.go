@@ -635,3 +635,74 @@ func TestWritePrunesAutomatically(t *testing.T) {
 		t.Errorf("expected at most %d history entries after auto-prune, got %d", DefaultMaxHistory, len(history))
 	}
 }
+
+func TestWriteRedactsSecretsBeforeSessionMarkdownWrite(t *testing.T) {
+	tmp := t.TempDir()
+	s := &Snapshot{
+		BifrostVersion: 1,
+		Timestamp:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "Do not leak OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+		NextStep:       "next",
+	}
+	if err := Write(tmp, s); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(SessionPath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "sk-proj-abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("session.md contains raw secret: %s", string(data))
+	}
+	if !strings.Contains(string(data), "[REDACTED:env_secret]") {
+		t.Fatalf("session.md does not contain redaction marker: %s", string(data))
+	}
+}
+
+func TestWriteFailsWhenSecurityStrictFindsSecret(t *testing.T) {
+	tmp := t.TempDir()
+	clean := &Snapshot{
+		BifrostVersion: 1,
+		Timestamp:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "clean",
+		NextStep:       "next",
+	}
+	if err := Write(tmp, clean); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(Dir(tmp), "config.json"), []byte(`{"security":{"strict":true}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Snapshot{
+		BifrostVersion: 1,
+		Timestamp:      time.Now().UTC(),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "Use Bearer abcdefghijklmnopqrstuvwxyz123456",
+		NextStep:       "next",
+	}
+	if err := Write(tmp, s); err == nil {
+		t.Fatal("expected strict security write failure")
+	}
+	data, err := os.ReadFile(SessionPath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "abcdefghijklmnopqrstuvwxyz123456") || !strings.Contains(string(data), "clean") {
+		t.Fatalf("strict failure should preserve existing clean session: %s", string(data))
+	}
+	entries, err := os.ReadDir(HistoryDir(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("strict failure should not archive current session, got %d entries", len(entries))
+	}
+}
