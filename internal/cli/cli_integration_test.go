@@ -600,6 +600,163 @@ func TestRestoreInvalidNumber(t *testing.T) {
 	}
 }
 
+func TestDiffTimelineAndRestorePreview(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".git"), 0755)
+	base := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Hour)
+
+	s1 := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      base,
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "Implement auth",
+		NextStep:       "Write code",
+		Risks:          []string{"Old risk"},
+		ActiveFiles:    []snapshot.ActiveFile{{Path: "src/auth.go", Confidence: "low"}},
+	}
+	if err := snapshot.Write(home, s1); err != nil {
+		t.Fatal(err)
+	}
+	s2 := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      base.Add(time.Hour),
+		SourceTool:     "opencode",
+		Project:        "test",
+		TokenPressure:  "medium",
+		CurrentTask:    "Fix auth tests",
+		NextStep:       "Run tests",
+		Risks:          []string{"New risk"},
+		OpenQuestions:  []string{"Should tokens rotate?"},
+		ActiveFiles:    []snapshot.ActiveFile{{Path: "tests/auth_test.go", Confidence: "medium"}},
+	}
+	if err := snapshot.Write(home, s2); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "diff", "--project", home)
+	if code != 0 {
+		t.Fatalf("diff failed (exit %d):\n%s", code, out)
+	}
+	for _, want := range []string{"Snapshot diff", "Task changed", "Next step changed", "Active files added"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("diff missing %q:\n%s", want, out)
+		}
+	}
+
+	out, _, code = runBifrost(t, home, "diff", "latest~1..latest", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("diff --json failed (exit %d):\n%s", code, out)
+	}
+	var diff struct {
+		TaskChanged *struct {
+			Before string `json:"before"`
+			After  string `json:"after"`
+		} `json:"task_changed"`
+		ActiveFiles struct {
+			Added []string `json:"added"`
+		} `json:"active_files"`
+	}
+	if err := json.Unmarshal([]byte(out), &diff); err != nil {
+		t.Fatalf("invalid diff JSON: %v\n%s", err, out)
+	}
+	if diff.TaskChanged == nil || diff.TaskChanged.After != "Fix auth tests" {
+		t.Fatalf("unexpected diff JSON:\n%s", out)
+	}
+	if !containsString(diff.ActiveFiles.Added, "tests/auth_test.go") {
+		t.Fatalf("diff JSON missing added file:\n%s", out)
+	}
+
+	before, err := os.ReadFile(snapshot.SessionPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, code = runBifrost(t, home, "restore", "1", "--preview", "--project", home)
+	if code != 0 {
+		t.Fatalf("restore --preview failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "Restore preview") || !strings.Contains(out, "Preview only") {
+		t.Fatalf("restore preview missing expected text:\n%s", out)
+	}
+	after, err := os.ReadFile(snapshot.SessionPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("restore --preview modified session.md")
+	}
+
+	out, _, code = runBifrost(t, home, "timeline", "--project", home)
+	if code != 0 {
+		t.Fatalf("timeline failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "Bifrost timeline") || !strings.Contains(out, "snapshot.write") {
+		t.Fatalf("timeline missing snapshot events:\n%s", out)
+	}
+}
+
+func TestDiffUsesJSONHistoryWhenMarkdownHistoryIsAbsent(t *testing.T) {
+	home := t.TempDir()
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	first := &snapshot.SnapshotV2{
+		SchemaVersion: snapshot.SnapshotSchemaV2,
+		ID:            "snap_json_first",
+		Project:       snapshot.ProjectRefV2{Name: "test", Root: home},
+		CapturedAt:    base,
+		Source:        snapshot.SourceV2{Tool: "test"},
+		Session:       snapshot.SessionStateV2{Task: "JSON first", NextStep: "old next"},
+		Integrity:     snapshot.SnapshotIntegrityV2{VerifyStatus: "not_run"},
+	}
+	second := *first
+	second.ID = "snap_json_second"
+	second.CapturedAt = base.Add(time.Hour)
+	second.Session.Task = "JSON second"
+	second.Session.NextStep = "new next"
+	if err := snapshot.WriteSnapshotV2(home, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.WriteSnapshotV2(home, &second); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "diff", "--json", "--project", home)
+	if code != 0 {
+		t.Fatalf("diff --json with JSON history failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "JSON first") || !strings.Contains(out, "JSON second") {
+		t.Fatalf("diff did not use archived JSON snapshot:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "history", "--project", home)
+	if code != 0 {
+		t.Fatalf("history with JSON history failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "JSON first") {
+		t.Fatalf("history did not show JSON history:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "restore", "1", "--preview", "--project", home)
+	if code != 0 {
+		t.Fatalf("restore --preview with JSON history failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "Restore preview") || !strings.Contains(out, "JSON first") {
+		t.Fatalf("restore preview did not use JSON history:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "restore", "1", "--project", home)
+	if code != 0 {
+		t.Fatalf("restore with JSON history failed (exit %d):\n%s", code, out)
+	}
+	restored, err := snapshot.ReadSnapshotV2(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Session.Task != "JSON first" {
+		t.Fatalf("restore did not update session.json, got %q", restored.Session.Task)
+	}
+}
+
 // --- Export command tests ---
 
 func TestExportSnapshotJSON(t *testing.T) {

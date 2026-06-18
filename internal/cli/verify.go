@@ -59,6 +59,12 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			SafeNextAction: "Review verify findings and refresh the snapshot manually if needed.",
 		})
 	}
+	_ = snapshot.AppendTimelineEvent(root, snapshot.TimelineEvent{
+		Timestamp: result.GeneratedAt,
+		Type:      "verify." + result.Status,
+		Snapshot:  snap.ID,
+		Status:    result.Status,
+	})
 	return printVerifyResult(result)
 }
 

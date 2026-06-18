@@ -58,7 +58,7 @@ func WritePlanExecutionState(projectRoot string, plan *PlanV2) error {
 	} else {
 		applyPlanV2ToLegacy(legacy, plan)
 	}
-	return WritePlan(projectRoot, plan.Name, legacy)
+	return writePlan(projectRoot, plan.Name, legacy, false)
 }
 
 func PlanExecutionSummaryFor(projectRoot string, plan *PlanV2) PlanExecutionSummary {

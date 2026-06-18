@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,11 +34,15 @@ func Archive(projectRoot string) error {
 }
 
 func archiveRaw(projectRoot string, data []byte, name string) error {
+	return archiveRawWithExt(projectRoot, data, name, ".md")
+}
+
+func archiveRawWithExt(projectRoot string, data []byte, name, ext string) error {
 	if err := os.MkdirAll(HistoryDir(projectRoot), 0700); err != nil {
 		return err
 	}
 
-	dest := filepath.Join(HistoryDir(projectRoot), name+".md")
+	dest := filepath.Join(HistoryDir(projectRoot), name+ext)
 
 	// Use O_EXCL to atomically check-and-create, avoiding TOCTOU races
 	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -47,7 +52,7 @@ func archiveRaw(projectRoot string, data []byte, name string) error {
 		}
 		// File exists — append a suffix to avoid collision
 		for i := 1; ; i++ {
-			candidate := filepath.Join(HistoryDir(projectRoot), fmt.Sprintf("%s-%d.md", name, i))
+			candidate := filepath.Join(HistoryDir(projectRoot), fmt.Sprintf("%s-%d%s", name, i, ext))
 			f, err = os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 			if err == nil {
 				dest = candidate
@@ -64,6 +69,23 @@ func archiveRaw(projectRoot string, data []byte, name string) error {
 	return err
 }
 
+func ArchiveSnapshotJSON(projectRoot string) error {
+	path := SnapshotJSONPath(projectRoot)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	name := "unknown-json"
+	var snap SnapshotV2
+	if err := json.Unmarshal(data, &snap); err == nil && !snap.CapturedAt.IsZero() {
+		name = snap.CapturedAt.UTC().Format("2006-01-02T15-04-05Z")
+	}
+	return archiveRawWithExt(projectRoot, data, name, ".json")
+}
+
 // DefaultMaxHistory is the default maximum number of snapshots to retain in history.
 const DefaultMaxHistory = 50
 
@@ -71,6 +93,14 @@ const DefaultMaxHistory = 50
 // If maxKeep <= 0, no pruning is done.
 // Errors from individual deletions are ignored — prune is best-effort.
 func Prune(projectRoot string, maxKeep int) error {
+	return pruneHistoryExt(projectRoot, maxKeep, ".md")
+}
+
+func PruneSnapshotJSON(projectRoot string, maxKeep int) error {
+	return pruneHistoryExt(projectRoot, maxKeep, ".json")
+}
+
+func pruneHistoryExt(projectRoot string, maxKeep int, ext string) error {
 	if maxKeep <= 0 {
 		return nil
 	}
@@ -84,20 +114,20 @@ func Prune(projectRoot string, maxKeep int) error {
 		return err
 	}
 
-	var mdFiles []os.DirEntry
+	var files []os.DirEntry
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			mdFiles = append(mdFiles, e)
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ext) {
+			files = append(files, e)
 		}
 	}
 
 	// ReadDir returns entries sorted by name; filenames are timestamps so this
 	// is chronological order — oldest entries are at the front.
-	if len(mdFiles) <= maxKeep {
+	if len(files) <= maxKeep {
 		return nil
 	}
 
-	toDelete := mdFiles[:len(mdFiles)-maxKeep]
+	toDelete := files[:len(files)-maxKeep]
 	for _, e := range toDelete {
 		os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck — best-effort
 	}
@@ -139,6 +169,42 @@ func History(projectRoot string) ([]*Snapshot, error) {
 	return snapshots, nil
 }
 
+func HistoryV2(projectRoot string) ([]*SnapshotV2, error) {
+	dir := HistoryDir(projectRoot)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var snapshots []*SnapshotV2
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var snap SnapshotV2
+		if err := json.Unmarshal(data, &snap); err != nil {
+			continue
+		}
+		if err := ValidateSnapshotV2(&snap); err != nil {
+			continue
+		}
+		snapshots = append(snapshots, &snap)
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].CapturedAt.Equal(snapshots[j].CapturedAt) {
+			return snapshots[i].ID > snapshots[j].ID
+		}
+		return snapshots[i].CapturedAt.After(snapshots[j].CapturedAt)
+	})
+	return snapshots, nil
+}
+
 // Restore copies a historical snapshot to session.md (archiving the current one first).
 func Restore(projectRoot string, index int) error {
 	history, err := History(projectRoot)
@@ -163,5 +229,46 @@ func Restore(projectRoot string, index int) error {
 	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, SessionPath(projectRoot))
+	if err := os.Rename(tmp, SessionPath(projectRoot)); err != nil {
+		return err
+	}
+	if fileExists(SnapshotJSONPath(projectRoot)) {
+		if err := WriteSnapshotV2(projectRoot, SnapshotToV2(projectRoot, history[index])); err != nil {
+			return err
+		}
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:     "snapshot.restore",
+		Snapshot: snapshotID(history[index]),
+		Task:     history[index].CurrentTask,
+	})
+	return nil
+}
+
+func RestoreSnapshotV2(projectRoot string, selected *SnapshotV2) error {
+	if err := ValidateSnapshotV2(selected); err != nil {
+		return err
+	}
+	if err := WriteSnapshotV2(projectRoot, selected); err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(SessionPath(projectRoot)); statErr == nil {
+		if err := Archive(projectRoot); err != nil {
+			return err
+		}
+	}
+	data := Render(SnapshotFromV2(selected))
+	tmp := SessionPath(projectRoot) + ".tmp"
+	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, SessionPath(projectRoot)); err != nil {
+		return err
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:     "snapshot.restore",
+		Snapshot: selected.ID,
+		Task:     selected.Session.Task,
+	})
+	return nil
 }
