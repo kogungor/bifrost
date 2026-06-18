@@ -10,6 +10,7 @@ import (
 
 	"github.com/kogungor/bifrost/internal/adapters"
 	"github.com/kogungor/bifrost/internal/project"
+	"github.com/kogungor/bifrost/internal/security"
 	"github.com/kogungor/bifrost/internal/snapshot"
 	"github.com/kogungor/bifrost/internal/ui"
 	"github.com/spf13/cobra"
@@ -23,9 +24,11 @@ var doctorCmd = &cobra.Command{
 }
 
 var doctorFix bool
+var doctorSecurity bool
 
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Attempt to fix detected issues automatically")
+	doctorCmd.Flags().BoolVar(&doctorSecurity, "security", false, "Check Bifrost local state for secret-like values")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -166,6 +169,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				ui.Warning("Gitignore            no .gitignore found")
 			}
 		}
+
+		if doctorSecurity {
+			issues += runDoctorSecurity(root)
+		}
 	}
 
 	ui.Blank()
@@ -184,6 +191,47 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runDoctorSecurity(root string) int {
+	targets, err := scrubTargets(root, true)
+	if err != nil {
+		ui.Error("Security             could not list Bifrost files", err.Error())
+		return 1
+	}
+	if len(targets) == 0 {
+		ui.Success("Security             no Bifrost state files found")
+		return 0
+	}
+	cfg := security.LoadConfig(root)
+	active := 0
+	allowlisted := 0
+	for _, target := range targets {
+		data, err := os.ReadFile(target)
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Security             %s unreadable: %s", relToRoot(root, target), err.Error()))
+			continue
+		}
+		findings := security.ScanString(string(data), cfg)
+		if security.CountActive(findings) > 0 {
+			active += security.CountActive(findings)
+			ui.Error("Security             secret-like values found",
+				fmt.Sprintf("%s: %s", relToRoot(root, target), security.Summary(findings)))
+		}
+		if security.CountAllowlisted(findings) > 0 {
+			allowlisted += security.CountAllowlisted(findings)
+		}
+	}
+	if active > 0 {
+		ui.Dim("  Run 'bifrost scrub --write --history' to redact Bifrost local state.")
+		return 1
+	}
+	if allowlisted > 0 {
+		ui.Success(fmt.Sprintf("Security             clean (%d allowlisted finding(s))", allowlisted))
+		return 0
+	}
+	ui.Success("Security             no secret-like values detected")
+	return 0
 }
 
 func fileExists(path string) bool {

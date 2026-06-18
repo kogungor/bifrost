@@ -94,6 +94,11 @@ func Write(projectRoot string, s *Snapshot) error {
 		return err
 	}
 
+	data, err := redactBeforeWrite(projectRoot, Render(s))
+	if err != nil {
+		return err
+	}
+
 	// Archive previous snapshot if it exists
 	if _, err := os.Stat(SessionPath(projectRoot)); err == nil {
 		if err := Archive(projectRoot); err != nil {
@@ -103,14 +108,20 @@ func Write(projectRoot string, s *Snapshot) error {
 		_ = Prune(projectRoot, DefaultMaxHistory)
 	}
 
-	data := Render(s)
-
 	// Atomic write: temp file then rename
 	tmp := SessionPath(projectRoot) + ".tmp"
 	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, SessionPath(projectRoot))
+	if err := os.Rename(tmp, SessionPath(projectRoot)); err != nil {
+		return err
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:     "snapshot.write",
+		Snapshot: snapshotID(s),
+		Task:     s.CurrentTask,
+	})
+	return nil
 }
 
 // Age returns the time elapsed since the snapshot was taken.

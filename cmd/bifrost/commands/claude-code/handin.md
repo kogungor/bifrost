@@ -5,15 +5,43 @@ Load the Bifrost context snapshot and brief the user before continuing.
 Read the Bifrost snapshot and present a structured briefing. Do not start working
 until the user confirms.
 
+If the command was invoked as `/handin --verify`, run verification first and let
+that result shape the briefing. Normal `/handin` behavior must remain unchanged
+when `--verify` is absent.
+
 ## Steps
 
-**Step 1 — Read the snapshot**
+**Step 1 — Prefer compact CLI briefing**
+
+If the `bifrost` CLI is available, run:
+
+```bash
+bifrost brief --mode implement --budget 5000
+```
+
+Use this output as the default compact briefing because it is mode-aware,
+budgeted, includes high-severity risks/questions, verification status, trust
+signals, and active plan health. If the command succeeds, print its briefing,
+then skip to Step 9 and ask before proceeding.
+
+If the user invoked `/handin --verify`, this compact briefing is acceptable
+because `bifrost brief` runs the same non-destructive verification checks. If
+the briefing shows verification status `fail`, do not start implementation;
+ask the user how to proceed after printing the briefing.
+
+If the CLI command is unavailable or fails, continue with the fallback steps
+below.
+
+**Step 2 — Read the snapshot**
 
 Try `bifrost_read_snapshot` MCP tool first (no arguments). If the tool is available
 and returns `found: true`, use its response for all subsequent steps.
 
-If the MCP tool is unavailable, read `.bifrost/session.md` directly instead.
-Parse the YAML frontmatter and markdown sections manually.
+If the MCP tool is unavailable, read local snapshot files directly. Prefer
+`.bifrost/session.json` when it exists because it has machine-readable fields.
+If `session.json` cannot be parsed or validated, mention that problem in the
+briefing and fall back to `.bifrost/session.md` so legacy handins still work.
+When reading Markdown, parse the YAML frontmatter and sections manually.
 
 If neither source yields a snapshot, print:
 
@@ -26,12 +54,66 @@ If neither source yields a snapshot, print:
 
 Then stop.
 
-**Step 2 — Read BIFROST.md**
+**Step 3 — Optional verification (`--verify`)**
+
+If the user invoked `/handin --verify`, run:
+
+```bash
+bifrost verify --json
+```
+
+If the command exits non-zero but prints JSON, still parse and use the JSON. If
+the command is unavailable or no parseable JSON is produced, continue with the
+normal briefing and add this at the start:
+
+```
+  Verification summary
+  Could not run `bifrost verify --json`; treat this briefing as unverified.
+```
+
+Do not run destructive commands and do not use `--fix`.
+
+When verification JSON is available, read:
+- `status`
+- `checks`
+- `recommended_next_action`
+
+At the beginning of the briefing, before task/status details, include:
+
+```
+  Verification summary
+  <overall status: pass, warn, or fail>
+
+  Trust this
+  <important pass checks, summarized briefly>
+
+  Verify this first
+  <warn/fail checks with check id, message, and safe_next_action when present>
+
+  Do not assume
+  <critical stale or unverified claims implied by warn/fail checks>
+
+  Safe next action
+  <recommended_next_action>
+```
+
+Use these mappings for "Do not assume":
+- `commands.test_claims` warn/fail: do not assume tests pass.
+- `files.active_changed` warn/fail: do not assume active files are unchanged.
+- `git.branch_match` or `git.commit_match` warn/fail: do not assume snapshot git context is current.
+- `questions.unresolved_high` warn/fail: do not assume high-severity questions are resolved.
+- `risks.unresolved_high` warn/fail: do not assume high-severity risks are resolved.
+- `claims.evidence` warn/fail: do not assume model claims are evidence-backed.
+
+If verification status is `fail`, finish the briefing and ask before starting
+any implementation.
+
+**Step 4 — Read BIFROST.md**
 
 Read `BIFROST.md` if it exists in the project root. You will use its Stack and
 Conventions sections in the briefing.
 
-**Step 3 — Check snapshot age**
+**Step 5 — Check snapshot age**
 
 If using MCP: use `age_seconds` from the response.
 If reading the file directly: calculate age from the `timestamp` frontmatter field.
@@ -39,7 +121,7 @@ If reading the file directly: calculate age from the `timestamp` frontmatter fie
 - If older than 2 hours but less than 24 hours: note the age in the briefing.
 - If older than 24 hours: show a prominent warning before the briefing.
 
-**Step 4 — Print the briefing**
+**Step 6 — Print the briefing**
 
 ```
   ─────────────────────────────────────────
@@ -60,8 +142,10 @@ If reading the file directly: calculate age from the `timestamp` frontmatter fie
   <status checklist>
 
   Active files
-  <active_files — show path, note, and confidence if present, e.g.:
-    - src/auth.ts — stub written (confidence: medium)>
+  <active_files — show path, note, and trust. If multidimensional trust is present,
+  include implementation/tests/security/architecture/freshness/evidence. If only
+  legacy confidence exists, show it as implementation confidence, e.g.:
+    - src/auth.ts — stub written (implementation: medium; tests: low; security: low; freshness: stale; evidence: weak)>
 
   Key decisions
   <decisions>
@@ -93,6 +177,9 @@ Close the briefing block:
   ─────────────────────────────────────────
 ```
 
+If `/handin --verify` was used, prepend the verification summary from Step 2 to
+this briefing.
+
 If `BIFROST.md` exists, prepend the briefing with:
 
 ```
@@ -108,11 +195,13 @@ If a handoff note exists (from MCP response or `.bifrost/handoff.md`), append:
   "<handoff note text>"
 ```
 
-**Step 5 — Load active plan (if set)**
+**Step 7 — Load active plan (if set)**
 
 If `active_plan_name` is non-empty:
 - If MCP available: call `bifrost_read_plan` with that name.
 - If MCP unavailable: read `.bifrost/<active_plan_name>.plan.md` directly.
+- If the CLI is available, run `bifrost plan status <active_plan_name>` and use
+  its health and next safest action in the briefing.
 
 If the plan is found, append to the briefing:
 
@@ -120,13 +209,15 @@ If the plan is found, append to the briefing:
   ─────────────────────────────────────────
   Active plan   <plan title>
   Status        <plan status>
+  Health        <plan health score if available>
   Progress      <completion %>% (<steps done>/<total> steps done)
   Next step     <first pending step, or "all steps complete">
+  Safe action   <next safest action if available>
   Blocked       <blocked count> step(s)  ← omit line if 0
   ─────────────────────────────────────────
 ```
 
-**Step 6 — Surface open questions**
+**Step 8 — Surface open questions**
 
 If `open_questions` is non-empty, print after the briefing:
 
@@ -135,7 +226,7 @@ If `open_questions` is non-empty, print after the briefing:
   <open_questions, one per line>
 ```
 
-**Step 7 — Ask before proceeding**
+**Step 9 — Ask before proceeding**
 
 Print:
 

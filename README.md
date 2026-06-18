@@ -4,9 +4,11 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/kogungor/bifrost)](https://goreportcard.com/report/github.com/kogungor/bifrost)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> When tokens run dry, the bridge holds.
+> Local, trust-aware handoffs for AI coding agents.
 
-A session context bridge between AI coding tools. Write `/handoff` in one tool, `/handin` in another. Continue exactly where you left off. Create implementation plans with `/plan` in one tool, get critical analysis with `/review` in another.
+Bifrost carries AI coding context across tools with evidence, freshness checks, plan verification, and secret-safe local state. Write `/handoff` in one tool, use `/handin --verify` in another, and continue with a briefing that tells the next agent what to trust, what to verify first, and what not to assume.
+
+![Bifrost demo — handoff and handin across tools](demo.gif)
 
 ---
 
@@ -21,33 +23,39 @@ You're deep in a session with Claude Code. The context window or credit is nearl
 
 The session ends. You open OpenCode — or start a fresh Claude Code session. You explain everything again from scratch.
 
-But there's a subtler problem too. Even when you do carry context forward manually, the next AI has no signal for what to trust. It doesn't know which files were fully implemented vs. still stubs. It doesn't know which assumptions were verified vs. guessed. It doesn't know whether to plan or implement. It proceeds as if everything is settled — and confidently builds on things that were never confirmed.
+But there's a subtler problem too. Even when you do carry context forward manually, the next AI has no signal for what to trust. It does not know which facts came from the repo, which claims came from the previous model, whether "tests pass" has evidence, whether active files changed after the handoff, or whether a plan step is only claimed done.
 
-Bifrost solves both. Session context — and the confidence behind it — transfers between AI coding tools the same way a terminal session transfers between machines: seamlessly, without manual work.
+Bifrost solves both. It transfers session context and adds a local integrity layer around it: observed repo facts, evidence anchors, trust dimensions, stale-context checks, secret redaction, plan health, and a compact safe-next-action briefing.
 
 ## How It Works
 
 ```
-Claude Code                              OpenCode
-┌──────────────┐                        ┌──────────────┐
-│              │                        │              │
-│  /handoff ───┼──── .bifrost/ ────────▶┼── /handin    │
-│              │    session.md          │              │
-│  /handin  ◀──┼──── .bifrost/ ────────┼── /handoff   │
-│              │    session.md          │              │
-│  /plan   ────┼──── .bifrost/ ────────▶┼── /review    │
-│              │    *.plan.md           │              │
-└──────────────┘                        └──────────────┘
+Claude Code                                    OpenCode / new session
+┌──────────────┐                              ┌──────────────────────┐
+│              │                              │                      │
+│ /handoff ────┼── .bifrost/session.md ─────▶│ /handin              │
+│              │   .bifrost/session.json      │ /handin --verify     │
+│              │   .bifrost/evidence/*        │                      │
+│ /plan ───────┼── .bifrost/plans/*.json ───▶│ /review              │
+│              │   .bifrost/*.plan.md         │ /plan <name> --next  │
+└──────────────┘                              └──────────────────────┘
+
+Local integrity layer:
+  bifrost verify      stale branch/commit/file/evidence checks
+  bifrost brief       compact mode-aware briefing
+  bifrost diff        what changed since the previous snapshot
+  bifrost timeline    local snapshot/verify/plan event history
+  bifrost scrub       deterministic secret redaction
 ```
 
-1. Type `/handoff` — the AI captures your current task, status, active files (with confidence), decisions, environment notes, next step, session intent, assumptions, open questions, and risks into `.bifrost/session.md`
-2. Switch tools
-3. Type `/handin` — the AI reads the snapshot and presents a structured briefing
-4. Continue working — with full context and calibrated trust
+1. Type `/handoff` — the AI captures task, status, decisions, assumptions, risks, active files, and next step into `.bifrost/session.md` and canonical `.bifrost/session.json`.
+2. Enrich or verify locally — Bifrost can collect git/file/project facts, attach evidence, check freshness, and redact secret-like values.
+3. Switch tools and type `/handin --verify` — the next AI gets a compact briefing with "Trust this", "Verify this first", and "Do not assume this".
+4. Continue working — with context, plan state, evidence, and calibrated trust instead of a blind summary.
 
 ## Built with Bifrost
 
-This is a real `/handin` briefing from the session that built Bifrost itself — loaded in Claude Code after a `/handoff` from a previous session that hit the context limit:
+This is the kind of briefing Bifrost produces for a new AI session after a verified handoff:
 
 ```
 ─────────────────────────────────────────
@@ -55,45 +63,44 @@ This is a real `/handin` briefing from the session that built Bifrost itself —
 ─────────────────────────────────────────
 
 Project    bifrost
-From       claude-code
-Captured   earlier today (2026-03-28 ~10:37 UTC)
-Pressure   HIGH — previous session was near context limit
+Captured   18 minutes ago
+Intent     implementing
+Pressure   medium
+
+Verification summary
+  Status    warn
+  Snapshot  current enough to inspect, but not blindly trust
+
+Trust this
+  - Branch and active file list match the snapshot.
+  - `internal/snapshot/verify.go` exists and has current file metadata.
+  - Plan `integrity-pack` is active; health 84/100.
+
+Verify this first
+  - `go test ./...` claim has no passing command evidence in the handoff.
+  - `internal/cli/handin.md` changed after the snapshot.
+  - One step is claimed done but not verified.
+
+Do not assume this
+  - Secret scrub has run on history.
+  - The previous agent's "tests pass" claim is true without evidence.
+  - The high severity risk "stale active files" is resolved.
 
 Task
-Implement improvements from audit: OpenCode MCPConfigPath bug, snapshot
-retention, plan lock conflict reporting, snapshot size warning,
-doctor --fix mode, and CI badges.
+  Implement `bifrost verify` and `/handin --verify`.
 
-Status
-  [x] OpenCode MCPConfigPath bug fixed — returns absolute path, test updated
-  [x] Snapshot retention — Prune() + DefaultMaxHistory=50, auto-called in Write()
-  [x] Plan lock conflict reporting — active lock returns explicit error with rm hint
-  [x] Snapshot size warning in bifrost status — KB display, warn at >5KB and >10KB
-  [x] bifrost doctor --fix — auto-fixes commands, gitignore, BIFROST.md, MCP
-  [x] CI + Go Report Card + MIT badges added to README
+Active files
+  - internal/snapshot/verify.go
+    trust: implementation=medium tests=low security=medium freshness=current evidence=observed
+  - internal/cli/verify.go
+    trust: implementation=medium tests=low security=medium freshness=stale evidence=weak
 
-Key decisions
-  - Prune is best-effort: _ = Prune(...) — failure never blocks snapshot write
-  - staleLockAge = 30s: abandoned locks auto-removed; active locks return explicit error
-  - doctor --fix covers 4 cases: commands, MCP, BIFROST.md, gitignore
-  - MCP preferred over file write; fallback is documented limitation
-
-Environment notes
-  - go test ./... passes from repo root
-  - internal/cli coverage ~5% due to exec.Command integration tests
-
-Next step
-  Copy this /handin briefing output into README.md under a new "Built with
-  Bifrost" section as real-world proof.
+Next safest action
+  Inspect `internal/cli/verify.go`, then run the targeted verify tests before coding.
 ─────────────────────────────────────────
-
-Handoff note from claude-code
-"All improvements from audit complete — bug fixes, retention, lock reporting,
-size warning, doctor --fix, badges. Next: copy /handin briefing to README as
-real-world proof"
 ```
 
-The previous session ran out of context mid-sprint. Everything above was reconstructed from a single `/handoff`. The new session picked up without re-explanation.
+The new session does not have to guess whether the previous summary was true. It gets the context plus the trust boundaries around that context.
 
 ---
 
@@ -104,7 +111,7 @@ The previous session ran out of context mid-sprint. Everything above was reconst
 | Category          | Example                                                                  |
 | ----------------- | ------------------------------------------------------------------------ |
 | Current task      | "Implement JWT refresh token rotation"                                   |
-| Status            | `[x] validateToken()`, `[ ] refreshToken()`                              |
+| Status            | `[x] validateToken()`, `[x?] refreshToken()`, `[ ] revokeToken()`         |
 | Active files      | `src/auth.ts` — middleware stubbed, not wired                            |
 | Decisions         | "Using jsonwebtoken not jose — already installed"                        |
 | Environment notes | `AUTH_SECRET` must be in `.env`, not `.env.local`                        |
@@ -112,15 +119,19 @@ The previous session ran out of context mid-sprint. Everything above was reconst
 
 **Trust signals** — what tells the next AI what to trust, what to verify first, and what mode to operate in:
 
-| Category       | Example                                                           |
-| -------------- | ----------------------------------------------------------------- |
-| Session intent | `implementing` — plan, implement, debug, or review                |
-| Confidence     | `src/auth.ts` — confidence: medium (stub written, not tested)     |
-| Assumptions    | "Redis is available on localhost:6379" — unverified               |
-| Open questions | "Should refresh tokens be single-use or reusable across devices?" |
-| Risks          | "Token revocation list not yet implemented"                       |
+| Category       | Example                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| Session intent | `implementing` — plan, implement, debug, or review                       |
+| Observed facts | branch, commit, dirty files, active file metadata, project commands       |
+| Trust model    | `src/auth.ts` — implementation: medium, tests: low, freshness: current    |
+| Evidence       | `npm test` claim backed by a recorded `command_result` or left unverified |
+| Assumptions    | "Redis is available on localhost:6379" — unverified                      |
+| Open questions | "Should refresh tokens be single-use or reusable across devices?"        |
+| Risks          | "Token revocation list not yet implemented"                              |
 
-What does **not** get captured: file contents, conversation history, secrets, or generated artifacts. The snapshot is a structured summary of working memory — things in the AI's context that aren't yet in any file.
+Current Bifrost versions keep a human-readable `.bifrost/session.md` and can also maintain canonical `.bifrost/session.json` state for validation, verification, evidence anchors, trust dimensions, and diff/timeline operations.
+
+What does **not** get captured: full file contents, conversation history, secrets, long command logs, or generated artifacts. The snapshot is a structured summary of working memory — things in the AI's context that aren't yet in any file.
 
 ## Installation
 
@@ -241,6 +252,7 @@ The AI will capture the session state and write it to `.bifrost/session.md`. You
 
 ```
   Snapshot written to .bifrost/session.md
+  JSON state written to .bifrost/session.json
 
   Task    Implement JWT refresh token rotation
   Files   3 active files captured
@@ -276,18 +288,19 @@ The AI reads the snapshot and presents a briefing:
   Commit     18270bac
   Intent     implementing
   Pressure   high (previous session was near context limit)
+  Verify     warn — inspect changed files before trusting test claims
 
   Task
   Implement JWT refresh token rotation
 
   Status
-  - [x] validateToken()
-  - [-] refreshToken() — stub written, logic incomplete
+  - [x] validateToken() — verified by `npm test -- auth`
+  - [x?] refreshToken() — claimed done, not verified
   - [ ] revokeToken()
 
   Active files
-  - src/auth.ts — middleware stubbed, not wired (confidence: medium)
-  - src/tokens.ts — new file, refresh logic (confidence: low)
+  - src/auth.ts — implementation=medium tests=medium freshness=current
+  - src/tokens.ts — implementation=medium tests=low freshness=stale
 
   Key decisions
   - Using jsonwebtoken not jose: already installed
@@ -307,12 +320,21 @@ The AI reads the snapshot and presents a briefing:
 
   Risks
   - Token revocation list not yet implemented
+
+  Verify this first
+  - src/tokens.ts changed after handoff
+  - npm test status is unverified
+
+  Do not assume
+  - Redis is running locally
+  - Refresh tokens are single-use
   ─────────────────────────────────────────
 
   Active plan   auth-refactor
   Status        active
-  Progress      40% (2/5 steps done)
-  Next step     Write unit tests for validateToken()
+  Health        72/100
+  Progress      1 verified, 1 claimed but unverified, 1 blocked
+  Next action   Verify claimed step step_003 before marking it done
   ─────────────────────────────────────────
 
   Open questions — address these before starting:
@@ -322,6 +344,35 @@ The AI reads the snapshot and presents a briefing:
 ```
 
 The AI waits for your confirmation before starting any work.
+
+For higher-integrity resumes, use:
+
+```
+/handin --verify
+```
+
+The briefing starts with explicit trust guidance:
+
+```text
+Trust this.
+- Branch and active file list are current.
+
+Verify this first.
+- Test-pass claims are unverified.
+- src/tokens.ts changed after the handoff.
+
+Do not assume this.
+- Redis availability.
+- Refresh token single-use behavior.
+```
+
+The same compact briefing is available from the CLI:
+
+```bash
+bifrost brief --mode implement --budget 5000
+bifrost brief --mode review --full
+bifrost brief --json
+```
 
 ### Creating Plans
 
@@ -388,6 +439,8 @@ The reviewer approves in the next round:
   Plan is now active. Work can begin.
 ```
 
+![Bifrost demo — plan, review, and consensus across tools](demo-plan.gif)
+
 If the review cycle stalls after the maximum number of revisions (default: 3), the planner can override:
 
 ```
@@ -406,9 +459,70 @@ Plans support a full lifecycle: `draft` → `active` → `completed` → `archiv
 
 `/handin` always shows the snapshot age. If it's older than 2 hours, a warning is shown. If older than 24 hours, a prominent warning appears. You're never blocked — just informed.
 
+Run a local integrity check before trusting a handoff:
+
+```bash
+bifrost verify
+bifrost verify --strict
+bifrost verify --json
+```
+
+`bifrost verify` checks snapshot age, branch and commit drift, active file existence and metadata, evidence-backed claims, unresolved high severity risks/questions, active plan state, and secret-like values in local Bifrost state. It never runs destructive commands.
+
+### JSON State, Validation, And Migration
+
+Legacy Markdown snapshots remain readable. Canonical JSON state enables validation and machine-readable workflows:
+
+```bash
+bifrost migrate --dry-run
+bifrost migrate
+bifrost validate
+bifrost validate --snapshot .bifrost/session.json
+bifrost validate --plan .bifrost/plans/auth-refactor.json
+bifrost render --snapshot .bifrost/session.json
+```
+
+Validation errors are actionable and use this shape:
+
+```text
+Error: invalid snapshot schema
+- field: interpretation.status_items[0].state
+- value: done
+- expected: not_started | in_progress | blocked | claimed_done | verified_done | invalidated
+
+Try:
+  bifrost migrate --dry-run
+```
+
+### Diff And Timeline
+
+Bifrost can show what changed between the latest archived snapshot and the current snapshot:
+
+```bash
+bifrost diff
+bifrost diff latest~1..latest
+bifrost diff --json
+bifrost timeline
+bifrost restore 2 --preview
+```
+
+Timeline events are local JSON Lines in `.bifrost/timeline.jsonl`. They only store compact metadata such as event type, snapshot ID, plan name, status, and task summary. Secret-like values are redacted before writing.
+
 ### Working with BIFROST.md
 
 If `BIFROST.md` exists in your project root, `/handin` loads it and includes project context (stack, conventions, commands) in the briefing. This gives every new session a baseline understanding of the project.
+
+You can analyze and promote durable project context from local facts and snapshots:
+
+```bash
+bifrost context check
+bifrost context update --dry-run
+bifrost context update --accept all
+bifrost promote decision --dry-run
+bifrost promote --accept prom_1234abcd
+```
+
+Promotion is explicit: Bifrost does not overwrite durable project context without an accepted candidate ID or `--accept all`.
 
 Example `BIFROST.md`:
 
@@ -447,21 +561,41 @@ REST API for the mobile app. Currently in beta.
 
 ## CLI Reference
 
-| Command                      | Description                                      |
-| ---------------------------- | ------------------------------------------------ |
-| `bifrost install`            | Register slash commands for detected AI tools    |
-| `bifrost install --mcp`      | Also register Bifrost as an MCP server           |
-| `bifrost init`               | Initialize Bifrost in the current project        |
-| `bifrost status`             | Show snapshot age, size, intent, and active plan |
-| `bifrost export`             | Export snapshot and/or plans as JSON to stdout   |
-| `bifrost doctor`             | Diagnose installation and configuration          |
-| `bifrost doctor --fix`       | Diagnose and automatically fix detected issues   |
-| `bifrost history`            | List archived snapshots                          |
-| `bifrost restore <n>`        | Restore a historical snapshot                    |
-| `bifrost update`             | Show update instructions for the latest release  |
-| `bifrost update --check`     | Check if a newer version is available            |
-| `bifrost version`            | Print version                                    |
-| `bifrost completion <shell>` | Generate shell completions (bash, zsh, fish)     |
+| Command                               | Description                                      |
+| ------------------------------------- | ------------------------------------------------ |
+| `bifrost install`                     | Register slash commands for detected AI tools    |
+| `bifrost install --mcp`               | Also register Bifrost as an MCP server           |
+| `bifrost init`                        | Initialize Bifrost in the current project        |
+| `bifrost status`                      | Show snapshot age, size, intent, and active plan |
+| `bifrost export`                      | Export snapshot and/or plans as JSON to stdout   |
+| `bifrost validate`                    | Validate snapshot and plan state                 |
+| `bifrost migrate --dry-run`           | Preview Markdown-to-JSON migration               |
+| `bifrost render`                      | Render JSON v2 state back to Markdown            |
+| `bifrost snapshot --enrich`           | Collect observed git/file/project facts          |
+| `bifrost evidence list`               | List evidence records                            |
+| `bifrost evidence show <id>`          | Show one evidence record                         |
+| `bifrost verify`                      | Check freshness, evidence, risks, files, secrets |
+| `bifrost brief --mode implement`      | Print compact mode-aware briefing                |
+| `bifrost scrub --check`               | Check local Bifrost state for secret-like values |
+| `bifrost scrub --write --history`     | Redact secret-like values in local Bifrost state |
+| `bifrost plan status <name>`          | Show plan health and step status                 |
+| `bifrost plan next <name>`            | Show safest next plan action                     |
+| `bifrost plan verify <name>`          | Run configured plan verification commands        |
+| `bifrost context check`               | Analyze durable `BIFROST.md` context             |
+| `bifrost context update --dry-run`    | Preview `BIFROST.md` promotion patch             |
+| `bifrost promote --accept <id|all>`   | Promote accepted durable context candidates      |
+| `bifrost diff`                        | Compare latest archived and current snapshot     |
+| `bifrost timeline`                    | Show local snapshot/verify/plan event timeline   |
+| `bifrost history`                     | List archived snapshots                          |
+| `bifrost restore <n>`                 | Restore a historical snapshot                    |
+| `bifrost restore <n> --preview`       | Preview restore without modifying files          |
+| `bifrost doctor`                      | Diagnose installation and configuration          |
+| `bifrost doctor --security`           | Check local Bifrost state for secret-like values |
+| `bifrost doctor --fix`                | Diagnose and automatically fix detected issues   |
+| `bifrost update`                      | Show update instructions for the latest release  |
+| `bifrost update --check`              | Check if a newer version is available            |
+| `bifrost version`                     | Print version                                    |
+| `bifrost completion <shell>`          | Generate shell completions (bash, zsh, fish)     |
 
 ### Global Flags
 
@@ -483,7 +617,7 @@ bifrost export --format all       # snapshot + plans
 
 ### Snapshot History
 
-Every `/handoff` automatically archives the previous snapshot. History is capped at 50 entries — oldest snapshots are pruned automatically. View and restore them:
+Every `/handoff` automatically archives the previous snapshot. History is capped at 50 entries — oldest snapshots are pruned automatically. JSON-backed snapshots are archived too. View, diff, preview, and restore them:
 
 ```bash
 bifrost history
@@ -497,6 +631,8 @@ bifrost history
   3  2025-03-20 19:05:31    yesterday    claude-code    initial project setup
 
 bifrost restore 2
+bifrost restore 2 --preview
+bifrost diff
 ```
 
 ## Supported Tools
@@ -513,13 +649,18 @@ Adding a new tool requires only a new adapter file — no changes to core logic.
 
 ## Files
 
-| Path                      | Purpose                             | In Git? |
-| ------------------------- | ----------------------------------- | ------- |
-| `BIFROST.md`              | Project config (stack, conventions) | Yes     |
-| `.bifrost/session.md`     | Active snapshot                     | No      |
-| `.bifrost/handoff.md`     | Freeform handoff note               | No      |
-| `.bifrost/history/`       | Archived snapshots                  | No      |
-| `.bifrost/<name>.plan.md` | Implementation plans                | No      |
+| Path                                | Purpose                                  | In Git? |
+| ----------------------------------- | ---------------------------------------- | ------- |
+| `BIFROST.md`                        | Durable project context                  | Yes     |
+| `.bifrost/session.md`               | Human-readable active snapshot           | No      |
+| `.bifrost/session.json`             | Canonical JSON v2 active snapshot        | No      |
+| `.bifrost/handoff.md`               | Freeform handoff note                    | No      |
+| `.bifrost/history/`                 | Archived Markdown and JSON snapshots     | No      |
+| `.bifrost/evidence/`                | Optional structured evidence records     | No      |
+| `.bifrost/plans/<name>.json`        | Canonical JSON v2 plans                  | No      |
+| `.bifrost/<name>.plan.md`           | Human-readable implementation plans      | No      |
+| `.bifrost/timeline.jsonl`           | Local snapshot/verify/plan event history | No      |
+| `.bifrost/config.json`              | Optional local Bifrost runtime config    | No      |
 
 `.bifrost/` is automatically added to `.gitignore`.
 
@@ -539,8 +680,8 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 
 | Tool                     | Description                                                                                                                                         |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bifrost_read_snapshot`  | Read the current session snapshot (returns all fields including semantic enrichments)                                                               |
-| `bifrost_write_snapshot` | Write a new snapshot — accepts session intent, assumptions, open questions, risks, confidence on files, and active plan name; auto-collects git SHA |
+| `bifrost_read_snapshot`  | Read the current session snapshot, including legacy Markdown fields and v2 JSON integrity state when available                                      |
+| `bifrost_write_snapshot` | Write a new snapshot with semantic fields, legacy confidence, optional command/manual evidence, collected git facts, and canonical `session.json`    |
 | `bifrost_write_note`     | Write a freeform handoff note                                                                                                                       |
 | `bifrost_status`         | Quick status: snapshot age, session intent, active plan, open question count, history count                                                         |
 
@@ -556,12 +697,12 @@ This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`)
 
 ## What Bifrost Is Not
 
-- A decision memory system
+- A cloud memory service or automatic long-term memory
 - A build output bridge
 - A model router or proxy
 - A replacement for CLAUDE.md or AGENTS.md
 
-Bifrost is a point-in-time session snapshot protocol and cross-tool planning workflow with a simple slash command UX.
+Bifrost is a local point-in-time context integrity layer and cross-tool planning workflow with a simple slash command UX.
 
 ## Contributing
 
@@ -576,9 +717,22 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, project
 
 - All data stays local. No network calls after installation.
 - No telemetry or analytics.
-- No secrets are stored (the AI is instructed not to include them).
+- Secret-like values are detected deterministically before snapshot writes and can be scrubbed with `bifrost scrub`.
 - `.bifrost/` is gitignored by default.
-- The snapshot is plain Markdown — open it in any editor to inspect.
+- The snapshot remains inspectable as plain Markdown, with JSON state available for validation and automation.
+
+## Integrity Metrics
+
+These are manual product-health checks you can track while using Bifrost:
+
+| Metric | How to check |
+| ------ | ------------ |
+| Resume time | Time from `/handin` to a safe next action; target under 2 minutes |
+| Critical unverified claim rate | Count high-risk claims without evidence in `bifrost verify --json` |
+| Stale active file detection | Confirm `bifrost verify` catches branch, commit, or active file drift |
+| Secret leakage corpus result | Run `go test ./internal/security` and `bifrost scrub --check --history` |
+| Plan claimed vs verified coverage | Inspect `bifrost plan status <name>` |
+| Default briefing size | Run `bifrost brief --mode implement --budget 5000` |
 
 ## License
 

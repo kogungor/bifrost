@@ -867,6 +867,67 @@ func TestReviewNoteNewFormatRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRenderPlanGolden(t *testing.T) {
+	p := &Plan{
+		BifrostVersion:   2,
+		CreatedAt:        time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC),
+		UpdatedAt:        time.Date(2026, 6, 18, 10, 22, 33, 0, time.UTC),
+		SourceTool:       "claude-code",
+		Project:          "bifrost",
+		Status:           PlanStatusActive,
+		PlanVersion:      2,
+		ProposedBy:       "claude-code",
+		MaxRevisions:     3,
+		RevisionCount:    1,
+		ConsensusState:   ConsensusReached,
+		ActivationReason: ActivationConsensus,
+		Title:            "Integrity Foundation",
+		Goal:             "Add baseline tests before JSON migration.",
+		Steps: []PlanStep{
+			{
+				ID:          "step_audit",
+				Description: "Audit current Markdown boundaries",
+				Status:      "done",
+				Files:       []string{"internal/snapshot/snapshot.go"},
+			},
+			{
+				ID:          "step_golden",
+				Description: "Add golden render tests",
+				Status:      "pending",
+				Files:       []string{"internal/snapshot/snapshot_test.go", "internal/snapshot/plan_test.go"},
+			},
+			{
+				ID:          "step_policy",
+				Description: "Decide JSON migration write policy",
+				Status:      "blocked",
+				Files:       []string{"INTEGRITY_PACK_TODO.md"},
+			},
+		},
+		Constraints: []string{
+			"Keep existing session.md and plan.md readable",
+			"Do not change adapter behavior",
+		},
+		ReviewNotes: []ReviewNote{
+			{
+				From:        "opencode",
+				At:          time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC),
+				PlanVersion: 2,
+				Outcome:     ReviewOutcomeApproved,
+				Text:        "Baseline looks safe",
+			},
+		},
+	}
+
+	got := RenderPlan(p)
+	wantBytes, err := os.ReadFile(filepath.Join("testdata", "plan_render.golden.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(wantBytes) {
+		t.Fatalf("plan render mismatch\n--- got ---\n%s\n--- want ---\n%s", got, string(wantBytes))
+	}
+}
+
 func TestLegacyReviewNoteStillParses(t *testing.T) {
 	raw := `---
 bifrost_version: 1
