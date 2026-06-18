@@ -493,6 +493,9 @@ func TestRestoreRoundTrip(t *testing.T) {
 	if current.CurrentTask != "second task" {
 		t.Errorf("expected second task, got %q", current.CurrentTask)
 	}
+	if err := WriteSnapshotV2(tmp, SnapshotToV2(tmp, s2)); err != nil {
+		t.Fatal(err)
+	}
 
 	// Restore s1 (index 0 = newest in history, which is s1)
 	if err := Restore(tmp, 0); err != nil {
@@ -502,6 +505,13 @@ func TestRestoreRoundTrip(t *testing.T) {
 	restored, _ := Read(tmp)
 	if restored.CurrentTask != "first task" {
 		t.Errorf("expected first task after restore, got %q", restored.CurrentTask)
+	}
+	restoredV2, err := SnapshotFromProject(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredV2.Session.Task != "first task" {
+		t.Errorf("expected JSON-backed restore to expose first task, got %q", restoredV2.Session.Task)
 	}
 }
 

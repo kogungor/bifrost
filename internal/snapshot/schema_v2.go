@@ -600,11 +600,27 @@ func WriteSnapshotV2(projectRoot string, s *SnapshotV2) error {
 		data = []byte(redacted)
 	}
 	data = append(data, '\n')
+	if _, err := os.Stat(SnapshotJSONPath(projectRoot)); err == nil {
+		if err := ArchiveSnapshotJSON(projectRoot); err != nil {
+			return err
+		}
+		_ = PruneSnapshotJSON(projectRoot, DefaultMaxHistory)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	tmp := SnapshotJSONPath(projectRoot) + ".tmp"
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, SnapshotJSONPath(projectRoot))
+	if err := os.Rename(tmp, SnapshotJSONPath(projectRoot)); err != nil {
+		return err
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:     "snapshot.write",
+		Snapshot: s.ID,
+		Task:     s.Session.Task,
+	})
+	return nil
 }
 
 // ReadPlanV2 reads and validates `.bifrost/plans/<name>.json`.
@@ -649,7 +665,15 @@ func WritePlanV2(projectRoot string, p *PlanV2) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, PlanJSONPath(projectRoot, p.Name))
+	if err := os.Rename(tmp, PlanJSONPath(projectRoot, p.Name)); err != nil {
+		return err
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:   "plan.write",
+		Plan:   p.Name,
+		Status: p.Status,
+	})
+	return nil
 }
 
 func (s *SnapshotV2) UnmarshalJSON(data []byte) error {
