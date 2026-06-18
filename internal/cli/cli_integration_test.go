@@ -616,6 +616,213 @@ func TestExportInvalidFormat(t *testing.T) {
 	}
 }
 
+// --- Integrity Pack Phase 2: validate, render, migrate ---
+
+func TestValidateLegacySnapshot(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "medium",
+		CurrentTask:    "validate legacy snapshot",
+		NextStep:       "continue",
+	}
+	if err := snapshot.Write(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "validate", "--project", home)
+	if code != 0 {
+		t.Fatalf("validate exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Snapshot valid") || !strings.Contains(out, "Validated 1 Bifrost file") {
+		t.Errorf("unexpected validate output:\n%s", out)
+	}
+}
+
+func TestValidateInvalidSnapshotJSON(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".bifrost"), 0755)
+	path := filepath.Join(home, ".bifrost", "bad.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"snapshot.v1"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "validate", "--snapshot", path, "--project", home)
+	if code == 0 {
+		t.Fatalf("validate should fail for invalid JSON:\n%s", out)
+	}
+	if !strings.Contains(out, "Invalid snapshot schema") || !strings.Contains(out, "schema_version") {
+		t.Errorf("unexpected invalid validate output:\n%s", out)
+	}
+}
+
+func TestMigrateDryRunDoesNotWriteJSON(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "dry-run migration",
+		NextStep:       "write JSON later",
+	}
+	if err := snapshot.Write(home, snap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "migrate", "--dry-run", "--project", home)
+	if code != 0 {
+		t.Fatalf("migrate --dry-run exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"schema_version": "snapshot.v2"`) {
+		t.Errorf("dry-run output missing snapshot.v2 JSON:\n%s", out)
+	}
+	if _, err := os.Stat(snapshot.SnapshotJSONPath(home)); !os.IsNotExist(err) {
+		t.Error("migrate --dry-run should not write session.json")
+	}
+}
+
+func TestMigrateWritesSnapshotAndPlanJSON(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "write migration",
+		NextStep:       "validate JSON",
+	}
+	if err := snapshot.Write(home, snap); err != nil {
+		t.Fatal(err)
+	}
+	plan := &snapshot.Plan{
+		BifrostVersion: snapshot.CurrentVersion,
+		CreatedAt:      time.Now().UTC().Truncate(time.Second),
+		UpdatedAt:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		Status:         snapshot.PlanStatusDraft,
+		Title:          "Migration Plan",
+		Goal:           "Write JSON files.",
+		Steps:          []snapshot.PlanStep{{ID: "step_001", Description: "Migrate", Status: "pending"}},
+	}
+	if err := snapshot.WritePlan(home, "migration-plan", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "migrate", "--project", home)
+	if code != 0 {
+		t.Fatalf("migrate exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Migration processed 2 file") {
+		t.Errorf("unexpected migrate output:\n%s", out)
+	}
+	if _, err := snapshot.ReadSnapshotV2(home); err != nil {
+		t.Fatalf("session.json not readable: %v", err)
+	}
+	if _, err := snapshot.ReadPlanV2(home, "migration-plan"); err != nil {
+		t.Fatalf("plan JSON not readable: %v", err)
+	}
+}
+
+func TestRenderSnapshotJSON(t *testing.T) {
+	home := t.TempDir()
+	snap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "medium",
+		CurrentTask:    "render JSON",
+		NextStep:       "inspect Markdown",
+		Status:         []string{"- [x] JSON written"},
+	}
+	if err := snapshot.WriteSnapshotV2(home, snapshot.SnapshotToV2(home, snap)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "render", "--project", home)
+	if code != 0 {
+		t.Fatalf("render exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "# Session Snapshot") || !strings.Contains(out, "render JSON") {
+		t.Errorf("unexpected render output:\n%s", out)
+	}
+}
+
+func TestExportUsesSnapshotJSONWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	markdownSnap := &snapshot.Snapshot{
+		BifrostVersion: snapshot.CurrentVersion,
+		Timestamp:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		TokenPressure:  "low",
+		CurrentTask:    "markdown task",
+		NextStep:       "old",
+	}
+	if err := snapshot.Write(home, markdownSnap); err != nil {
+		t.Fatal(err)
+	}
+	jsonSnap := *snapshot.SnapshotToV2(home, markdownSnap)
+	jsonSnap.Session.Task = "json task"
+	jsonSnap.Session.NextStep = "new"
+	if err := snapshot.WriteSnapshotV2(home, &jsonSnap); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "export", "--format", "snapshot", "--project", home)
+	if code != 0 {
+		t.Fatalf("export exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"current_task": "json task"`) {
+		t.Errorf("export should use session.json when present:\n%s", out)
+	}
+	if strings.Contains(out, "markdown task") {
+		t.Errorf("export should not use legacy session.md when session.json exists:\n%s", out)
+	}
+}
+
+func TestExportUsesPlanJSONWhenPresent(t *testing.T) {
+	home := t.TempDir()
+	plan := &snapshot.Plan{
+		BifrostVersion: snapshot.CurrentVersion,
+		CreatedAt:      time.Now().UTC().Truncate(time.Second),
+		UpdatedAt:      time.Now().UTC().Truncate(time.Second),
+		SourceTool:     "claude-code",
+		Project:        "test",
+		Status:         snapshot.PlanStatusDraft,
+		Title:          "Markdown Plan",
+		Goal:           "Old plan.",
+		Steps:          []snapshot.PlanStep{{ID: "step_old", Description: "Old", Status: "pending"}},
+	}
+	if err := snapshot.WritePlan(home, "json-plan", plan); err != nil {
+		t.Fatal(err)
+	}
+	jsonPlan := *snapshot.PlanToV2(plan, "json-plan")
+	jsonPlan.Title = "JSON Plan"
+	jsonPlan.Steps[0].Title = "New"
+	if err := snapshot.WritePlanV2(home, &jsonPlan); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "export", "--format", "plans", "--project", home)
+	if code != 0 {
+		t.Fatalf("export plans exited %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, `"title": "JSON Plan"`) {
+		t.Errorf("export should use plan JSON when present:\n%s", out)
+	}
+	if strings.Contains(out, "Markdown Plan") {
+		t.Errorf("export should not duplicate legacy plan when JSON exists:\n%s", out)
+	}
+}
+
 func TestStatusSnapshotSizeNormal(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, ".git"), 0755)
