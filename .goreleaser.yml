@@ -31,7 +31,7 @@ homebrew_casks:
     binaries:
       - bifrost
     homepage: https://github.com/kogungor/bifrost
-    description: Session context bridge between AI coding tools
+    description: Local, trust-aware handoffs for AI coding agents
     repository:
       owner: kogungor
       name: homebrew-bifrost

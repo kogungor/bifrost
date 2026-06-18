@@ -27,10 +27,13 @@ session_start:    <ISO 8601 timestamp of when this session began, omit if unknow
 assumptions:      <array of genuine uncertainties — omit if nothing real>
 open_questions:   <array of unresolved questions — omit if none>
 risks:            <array of known risks or blockers — omit if none>
+commands:         <optional array of {command, exit_code, summary, test_result} for commands already run>
+manual_evidence:  <optional array of explicit user/human notes that back important claims>
 ```
 
 The tool automatically handles archiving the previous snapshot, atomic file write,
-and git SHA collection.
+canonical `.bifrost/session.json` output, git/file/project fact collection,
+evidence attachment, and secret-like value redaction.
 
 If MCP is unavailable, fall back to writing `.bifrost/session.md` directly:
 
@@ -134,10 +137,12 @@ If `.gitignore` exists and does not contain `.bifrost/`, append:
 
 **Step 4 — Confirm to the user**
 
-Print exactly this (substituting actual values):
+Print this, substituting actual values. Include the JSON line only when the MCP
+write path succeeded or you otherwise confirmed `.bifrost/session.json` exists:
 
 ```
   Snapshot written to .bifrost/session.md
+  JSON state written to .bifrost/session.json
 
   Task    <first sentence of Current Task>
   Files   <count> active files captured
