@@ -113,7 +113,15 @@ func Write(projectRoot string, s *Snapshot) error {
 	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, SessionPath(projectRoot))
+	if err := os.Rename(tmp, SessionPath(projectRoot)); err != nil {
+		return err
+	}
+	_ = AppendTimelineEvent(projectRoot, TimelineEvent{
+		Type:     "snapshot.write",
+		Snapshot: snapshotID(s),
+		Task:     s.CurrentTask,
+	})
+	return nil
 }
 
 // Age returns the time elapsed since the snapshot was taken.
