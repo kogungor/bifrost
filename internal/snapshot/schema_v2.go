@@ -117,11 +117,12 @@ type ProjectObservedV2 struct {
 }
 
 type InterpretationV2 struct {
-	StatusItems   []StatusItemV2   `json:"status_items,omitempty"`
-	Decisions     []DecisionV2     `json:"decisions,omitempty"`
-	Assumptions   []AssumptionV2   `json:"assumptions,omitempty"`
-	OpenQuestions []OpenQuestionV2 `json:"open_questions,omitempty"`
-	Risks         []RiskV2         `json:"risks,omitempty"`
+	StatusItems      []StatusItemV2   `json:"status_items,omitempty"`
+	Decisions        []DecisionV2     `json:"decisions,omitempty"`
+	EnvironmentNotes []string         `json:"environment_notes,omitempty"`
+	Assumptions      []AssumptionV2   `json:"assumptions,omitempty"`
+	OpenQuestions    []OpenQuestionV2 `json:"open_questions,omitempty"`
+	Risks            []RiskV2         `json:"risks,omitempty"`
 }
 
 type StatusItemV2 struct {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/kogungor/bifrost/internal/snapshot"
@@ -72,11 +73,21 @@ func exportSnapshot(projectRoot string) error {
 }
 
 func buildSnapshotExport(projectRoot string) (map[string]any, error) {
+	if fileExists(snapshot.SnapshotJSONPath(projectRoot)) {
+		snapV2, err := snapshot.ReadSnapshotV2(projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		return buildSnapshotExportFromSnapshot(snapshot.SnapshotFromV2(snapV2), projectRoot)
+	}
 	snap, err := snapshot.Read(projectRoot)
 	if err != nil {
 		return nil, err
 	}
+	return buildSnapshotExportFromSnapshot(snap, projectRoot)
+}
 
+func buildSnapshotExportFromSnapshot(snap *snapshot.Snapshot, projectRoot string) (map[string]any, error) {
 	note, _ := snapshot.ReadNote(projectRoot)
 	var handoffNote string
 	if note != nil {
@@ -139,66 +150,88 @@ func buildPlansExport(projectRoot string) ([]map[string]any, error) {
 	}
 
 	result := make([]map[string]any, 0, len(names))
+	seen := map[string]bool{}
+	jsonPlans, _ := filepath.Glob(filepath.Join(snapshot.PlansDir(projectRoot), "*.json"))
+	for _, path := range jsonPlans {
+		name := planNameFromJSONPath(path)
+		p, err := snapshot.ReadPlanV2(projectRoot, name)
+		if err != nil {
+			continue
+		}
+		result = append(result, buildPlanExportMap(name, snapshot.PlanFromV2(p)))
+		seen[name] = true
+	}
+
 	for _, name := range names {
+		if seen[name] {
+			continue
+		}
 		p, err := snapshot.ReadPlan(projectRoot, name)
 		if err != nil {
 			continue
 		}
-
-		steps := make([]map[string]any, len(p.Steps))
-		for i, s := range p.Steps {
-			files := s.Files
-			if files == nil {
-				files = []string{}
-			}
-			steps[i] = map[string]any{
-				"id":          s.ID,
-				"description": s.Description,
-				"status":      s.Status,
-				"files":       files,
-			}
-		}
-
-		reviewNotes := make([]map[string]any, len(p.ReviewNotes))
-		for i, rn := range p.ReviewNotes {
-			reviewNotes[i] = map[string]any{
-				"from":         rn.From,
-				"at":           rn.At.UTC().Format(time.RFC3339),
-				"plan_version": rn.PlanVersion,
-				"outcome":      rn.Outcome,
-				"text":         rn.Text,
-			}
-		}
-
-		done, pending, blocked := p.StepSummary()
-		result = append(result, map[string]any{
-			"name":                 name,
-			"bifrost_version":      p.BifrostVersion,
-			"created_at":           p.CreatedAt.UTC().Format(time.RFC3339),
-			"updated_at":           p.UpdatedAt.UTC().Format(time.RFC3339),
-			"source_tool":          p.SourceTool,
-			"project":              p.Project,
-			"status":               p.Status,
-			"plan_version":         p.PlanVersion,
-			"proposed_by":          p.ProposedBy,
-			"revision_count":       p.RevisionCount,
-			"consensus_state":      p.ConsensusState,
-			"activation_reason":    p.ActivationReason,
-			"deadlock_detected":    p.DeadlockDetected,
-			"latest_review_outcome": p.LatestReviewOutcome(),
-			"title":                p.Title,
-			"goal":                 p.Goal,
-			"steps":                steps,
-			"constraints":          p.Constraints,
-			"review_notes":         reviewNotes,
-			"completion_pct":       p.CompletionPct(),
-			"steps_done":           done,
-			"steps_pending":        pending,
-			"steps_blocked":        blocked,
-		})
+		result = append(result, buildPlanExportMap(name, p))
 	}
 
 	return result, nil
+}
+
+func buildPlanExportMap(name string, p *snapshot.Plan) map[string]any {
+	steps := make([]map[string]any, len(p.Steps))
+	for i, s := range p.Steps {
+		files := s.Files
+		if files == nil {
+			files = []string{}
+		}
+		steps[i] = map[string]any{
+			"id":          s.ID,
+			"description": s.Description,
+			"status":      s.Status,
+			"files":       files,
+		}
+	}
+
+	reviewNotes := make([]map[string]any, len(p.ReviewNotes))
+	for i, rn := range p.ReviewNotes {
+		reviewNotes[i] = map[string]any{
+			"from":         rn.From,
+			"at":           rn.At.UTC().Format(time.RFC3339),
+			"plan_version": rn.PlanVersion,
+			"outcome":      rn.Outcome,
+			"text":         rn.Text,
+		}
+	}
+
+	done, pending, blocked := p.StepSummary()
+	return map[string]any{
+		"name":                  name,
+		"bifrost_version":       p.BifrostVersion,
+		"created_at":            p.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":            p.UpdatedAt.UTC().Format(time.RFC3339),
+		"source_tool":           p.SourceTool,
+		"project":               p.Project,
+		"status":                p.Status,
+		"plan_version":          p.PlanVersion,
+		"proposed_by":           p.ProposedBy,
+		"revision_count":        p.RevisionCount,
+		"consensus_state":       p.ConsensusState,
+		"activation_reason":     p.ActivationReason,
+		"deadlock_detected":     p.DeadlockDetected,
+		"latest_review_outcome": p.LatestReviewOutcome(),
+		"title":                 p.Title,
+		"goal":                  p.Goal,
+		"steps":                 steps,
+		"constraints":           p.Constraints,
+		"review_notes":          reviewNotes,
+		"completion_pct":        p.CompletionPct(),
+		"steps_done":            done,
+		"steps_pending":         pending,
+		"steps_blocked":         blocked,
+	}
+}
+
+func planNameFromJSONPath(path string) string {
+	return filepath.Base(path[:len(path)-len(filepath.Ext(path))])
 }
 
 func printJSON(v any) error {
