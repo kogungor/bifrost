@@ -90,6 +90,84 @@ func TestInstallFreshHome(t *testing.T) {
 	}
 }
 
+func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     string
+		detectDir   string
+		commandsDir string
+	}{
+		{
+			name:        "claude code",
+			adapter:     "claude-code",
+			detectDir:   ".claude",
+			commandsDir: filepath.Join(".claude", "commands"),
+		},
+		{
+			name:        "opencode",
+			adapter:     "opencode",
+			detectDir:   ".opencode",
+			commandsDir: filepath.Join(".opencode", "commands"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			os.MkdirAll(filepath.Join(home, tt.detectDir), 0755)
+
+			out, _, code := runBifrost(t, home, "install", "--adapter", tt.adapter)
+			if code != 0 {
+				t.Fatalf("install failed (exit %d): %s", code, out)
+			}
+
+			data, err := os.ReadFile(filepath.Join(home, tt.commandsDir, "handin.md"))
+			if err != nil {
+				t.Fatalf("read installed handin.md: %v", err)
+			}
+
+			handin := string(data)
+			for _, want := range []string{
+				"/handin --verify",
+				"bifrost verify --json",
+				"Verification summary",
+				"Trust this",
+				"Verify this first",
+				"Do not assume",
+				"recommended_next_action",
+				"do not use `--fix`",
+				"fall back to `.bifrost/session.md`",
+			} {
+				if !strings.Contains(handin, want) {
+					t.Errorf("installed handin.md missing %q", want)
+				}
+			}
+
+			data, err = os.ReadFile(filepath.Join(home, tt.commandsDir, "plan.md"))
+			if err != nil {
+				t.Fatalf("read installed plan.md: %v", err)
+			}
+
+			plan := string(data)
+			for _, want := range []string{
+				"/plan <name> --next",
+				"/plan <name> --verify",
+				"bifrost verify --json",
+				"Plan verification briefing",
+				"Do not run destructive commands",
+				"Do not update step status",
+				"first non-flag word",
+				"Scope note",
+				"snapshot/active plan",
+			} {
+				if !strings.Contains(plan, want) {
+					t.Errorf("installed plan.md missing %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestInstallDryRun(t *testing.T) {
 	home := t.TempDir()
 	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
