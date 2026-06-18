@@ -121,8 +121,10 @@ If reading the file directly: calculate age from the `timestamp` frontmatter fie
   <status checklist>
 
   Active files
-  <active_files — show path, note, and confidence if present, e.g.:
-    - src/auth.ts — stub written (confidence: medium)>
+  <active_files — show path, note, and trust. If multidimensional trust is present,
+  include implementation/tests/security/architecture/freshness/evidence. If only
+  legacy confidence exists, show it as implementation confidence, e.g.:
+    - src/auth.ts — stub written (implementation: medium; tests: low; security: low; freshness: stale; evidence: weak)>
 
   Key decisions
   <decisions>

@@ -57,8 +57,40 @@ func TestSnapshotToV2AndBackPreservesLegacyFields(t *testing.T) {
 	if roundTrip.SessionStart != "2026-06-18T09:00:00Z" {
 		t.Errorf("SessionStart = %q", roundTrip.SessionStart)
 	}
-	if roundTrip.Status[0] != "- [x] Audit complete" {
+	if roundTrip.Status[0] != "- [x?] Audit complete — claimed done, not verified" {
 		t.Errorf("Status[0] = %q", roundTrip.Status[0])
+	}
+}
+
+func TestStatusV2RenderDistinguishesClaimedAndVerified(t *testing.T) {
+	items := []StatusItemV2{
+		{ID: "status_1", Text: "validateToken implemented", State: "verified_done", Verification: &VerificationV2{State: "pass", Reason: "`go test ./...`"}},
+		{ID: "status_2", Text: "refreshToken implemented", State: "claimed_done", Verification: &VerificationV2{State: "unverified"}},
+		{ID: "status_3", Text: "token revocation", State: "blocked", Verification: &VerificationV2{State: "fail", Reason: "q_001"}},
+		{ID: "status_4", Text: "auth tests pass", State: "claimed_done", Verification: &VerificationV2{State: "fail", Reason: "`go test` failed"}},
+	}
+
+	got := statusItemsFromV2(items)
+	want := []string{
+		"- [x] validateToken implemented — verified by `go test ./...`",
+		"- [x?] refreshToken implemented — claimed done, not verified",
+		"- [!] token revocation — blocked by q_001",
+		"- [x?] auth tests pass — verification failed: `go test` failed",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("status %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	for i, rendered := range got {
+		text, state := parseChecklistState(rendered)
+		if text != items[i].Text {
+			t.Fatalf("parsed text %d = %q, want %q", i, text, items[i].Text)
+		}
+		if state != items[i].State {
+			t.Fatalf("parsed state %d = %q, want %q", i, state, items[i].State)
+		}
 	}
 }
 
