@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,6 +182,32 @@ func TestSnapshotV2ReadWriteRoundTrip(t *testing.T) {
 	}
 	if got := SnapshotJSONPath(dir); got != filepath.Join(dir, ".bifrost", "session.json") {
 		t.Errorf("SnapshotJSONPath = %q", got)
+	}
+}
+
+func TestSnapshotV2WriteRedactsSecretsAndMarksIntegrity(t *testing.T) {
+	dir := t.TempDir()
+	s := validSnapshotV2()
+	s.Session.Task = "Use Bearer abcdefghijklmnopqrstuvwxyz123456 during manual API test"
+	if err := WriteSnapshotV2(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(SnapshotJSONPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "abcdefghijklmnopqrstuvwxyz123456") {
+		t.Fatalf("session.json contains raw secret: %s", string(data))
+	}
+	read, err := ReadSnapshotV2(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.Integrity.RedactionApplied {
+		t.Fatalf("redaction_applied not set: %+v", read.Integrity)
+	}
+	if !strings.Contains(read.Session.Task, "Bearer [REDACTED:bearer_token]") {
+		t.Fatalf("task was not redacted with marker: %q", read.Session.Task)
 	}
 }
 

@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/kogungor/bifrost/internal/security"
 )
 
 const (
@@ -72,7 +73,7 @@ func VerifySnapshotV2(projectRoot string, snap *SnapshotV2, opts VerifyOptions) 
 	result.addEvidenceChecks(snap)
 	result.addQuestionRiskChecks(snap)
 	result.addPlanCheck(snap, opts.LoadActivePlan)
-	result.addSecurityCheck(snap)
+	result.addSecurityCheck(projectRoot, snap)
 	result.finalize()
 	return result
 }
@@ -265,14 +266,19 @@ func (r *VerifyResult) addPlanCheck(snap *SnapshotV2, loadPlan func(name string)
 	}
 }
 
-func (r *VerifyResult) addSecurityCheck(snap *SnapshotV2) {
+func (r *VerifyResult) addSecurityCheck(projectRoot string, snap *SnapshotV2) {
 	data, err := json.Marshal(snap)
 	if err != nil {
 		r.add(VerifyWarn, "security.secrets", "Could not scan snapshot for secret-like values.", "Inspect snapshot JSON manually.")
 		return
 	}
-	if finding := secretLikeFinding(string(data)); finding != "" {
-		r.add(VerifyFail, "security.secrets", "Snapshot contains secret-like value: "+finding+".", "Scrub the snapshot before sharing or continuing.")
+	findings := security.ScanString(string(data), security.LoadConfig(projectRoot))
+	if security.CountActive(findings) > 0 {
+		r.add(VerifyFail, "security.secrets", "Snapshot contains secret-like values: "+security.Summary(findings)+".", "Run `bifrost scrub --write` before sharing or continuing.")
+		return
+	}
+	if allowlisted := security.CountAllowlisted(findings); allowlisted > 0 {
+		r.add(VerifyPass, "security.secrets", fmt.Sprintf("No active secret-like values detected (%d allowlisted).", allowlisted), "")
 		return
 	}
 	r.add(VerifyPass, "security.secrets", "No secret-like values detected in snapshot JSON.", "")
@@ -377,28 +383,6 @@ func commandEvidencePassed(ev EvidenceV2) bool {
 		return exit == 0
 	}
 	return strings.Contains(strings.ToLower(ev.Summary), "pass")
-}
-
-var secretPatterns = []struct {
-	name string
-	re   *regexp.Regexp
-}{
-	{"private_key", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
-	{"bearer_token", regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]{20,}`)},
-	{"github_token", regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{30,}`)},
-	{"openai_key", regexp.MustCompile(`sk-[A-Za-z0-9_-]{20,}`)},
-	{"anthropic_key", regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`)},
-	{"database_url", regexp.MustCompile(`(?i)(postgres|mysql|mongodb)://[^"\s]+:[^"\s]+@`)},
-	{"jwt", regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)},
-}
-
-func secretLikeFinding(text string) string {
-	for _, pattern := range secretPatterns {
-		if pattern.re.FindString(text) != "" {
-			return pattern.name
-		}
-	}
-	return ""
 }
 
 func recommendedAction(checks []VerifyCheck) string {

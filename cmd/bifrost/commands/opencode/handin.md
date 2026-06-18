@@ -179,6 +179,8 @@ If a handoff note exists (from MCP response or `.bifrost/handoff.md`), append:
 If `active_plan_name` is non-empty:
 - If MCP available: call `bifrost_read_plan` with that name.
 - If MCP unavailable: read `.bifrost/<active_plan_name>.plan.md` directly.
+- If the CLI is available, run `bifrost plan status <active_plan_name>` and use
+  its health and next safest action in the briefing.
 
 If the plan is found, append to the briefing:
 
@@ -186,8 +188,10 @@ If the plan is found, append to the briefing:
   ─────────────────────────────────────────
   Active plan   <plan title>
   Status        <plan status>
+  Health        <plan health score if available>
   Progress      <completion %>% (<steps done>/<total> steps done)
   Next step     <first pending step, or "all steps complete">
+  Safe action   <next safest action if available>
   Blocked       <blocked count> step(s)  ← omit line if 0
   ─────────────────────────────────────────
 ```
