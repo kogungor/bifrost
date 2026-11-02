@@ -20,7 +20,7 @@ bifrost brief --mode implement --budget 5000
 ```
 
 Use this output as the default compact briefing because it is mode-aware,
-budgeted, includes high-severity risks/questions, verification status, trust
+budgeted (`--budget` is in characters; 5000 is roughly 1,200 tokens), includes high-severity risks/questions, verification status, trust
 signals, and active plan health. If the command succeeds, print its briefing,
 then skip to Step 9 and ask before proceeding.
 

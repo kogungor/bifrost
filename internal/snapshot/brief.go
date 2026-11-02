@@ -144,12 +144,14 @@ func verificationBriefSections(result VerifyResult) []briefSection {
 	doNotAssume := make([]string, 0)
 	for _, check := range result.Checks {
 		switch check.Status {
+		// Check IDs stay in `bifrost verify --json`; the briefing shows the
+		// messages, which read on their own.
 		case VerifyPass:
 			if len(trust) < 5 {
-				trust = append(trust, check.ID+": "+check.Message)
+				trust = append(trust, check.Message)
 			}
 		case VerifyWarn, VerifyFail:
-			line := check.ID + ": " + check.Message
+			line := check.Message
 			if check.SafeNextAction != "" {
 				line += " Next: " + check.SafeNextAction
 			}

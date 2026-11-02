@@ -271,6 +271,8 @@ bifrost brief --mode review --full
 bifrost brief --json
 ```
 
+`--budget` is the maximum briefing size in characters (default 5000, roughly 1,200 tokens). Beyond it, lower-priority sections are dropped and listed as omitted; verification warnings and high-severity risks are always kept. `--full` disables the budget.
+
 ### Creating Plans
 
 In any AI coding tool, type:
