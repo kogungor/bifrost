@@ -21,6 +21,23 @@ const (
 	EvidenceTypeModelClaim      = "model_claim"
 )
 
+const (
+	// EvidenceSourceCollectorPrefix marks evidence Bifrost observed itself.
+	// Callers cannot supply sources with this prefix.
+	EvidenceSourceCollectorPrefix = "collector."
+	// EvidenceSourceCollectorCommand is a command Bifrost ran, e.g. `bifrost plan verify`.
+	EvidenceSourceCollectorCommand = "collector.command"
+	// EvidenceSourceReportedCommand is a command result a caller (usually the
+	// previous agent) reported; Bifrost did not observe it.
+	EvidenceSourceReportedCommand = "reported.command"
+)
+
+// IsCollectedEvidence reports whether Bifrost gathered the evidence itself
+// rather than receiving it from a caller.
+func IsCollectedEvidence(ev EvidenceV2) bool {
+	return strings.HasPrefix(ev.Source, EvidenceSourceCollectorPrefix)
+}
+
 // ReportedCommand captures a caller-supplied command result. It is recorded as
 // evidence; Bifrost does not execute the command.
 type ReportedCommand struct {
@@ -43,6 +60,16 @@ type ManualEvidence struct {
 // NewCommandEvidence creates a command_result or test_result evidence record
 // from caller-reported data.
 func NewCommandEvidence(command ReportedCommand, observedAt time.Time) (CommandObservedV2, EvidenceV2) {
+	return newCommandEvidence(command, observedAt, EvidenceSourceReportedCommand)
+}
+
+// NewCollectedCommandEvidence creates a command_result or test_result evidence
+// record for a command Bifrost executed and observed itself.
+func NewCollectedCommandEvidence(command ReportedCommand, observedAt time.Time) (CommandObservedV2, EvidenceV2) {
+	return newCommandEvidence(command, observedAt, EvidenceSourceCollectorCommand)
+}
+
+func newCommandEvidence(command ReportedCommand, observedAt time.Time, source string) (CommandObservedV2, EvidenceV2) {
 	if command.CapturedAt.IsZero() {
 		command.CapturedAt = observedAt
 	}
@@ -75,7 +102,7 @@ func NewCommandEvidence(command ReportedCommand, observedAt time.Time) (CommandO
 	return observed, EvidenceV2{
 		ID:         evidenceID("ev_cmd", data),
 		Type:       typ,
-		Source:     "reported.command",
+		Source:     source,
 		ObservedAt: observedAt,
 		Summary:    commandEvidenceSummary(command),
 		Data:       data,

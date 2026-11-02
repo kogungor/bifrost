@@ -5,6 +5,7 @@ func All() []Adapter {
 	return []Adapter{
 		newClaudeCode(),
 		newOpenCode(),
+		newCodex(),
 	}
 }
 

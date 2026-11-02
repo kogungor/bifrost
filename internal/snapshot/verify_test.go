@@ -151,6 +151,46 @@ func TestVerifySnapshotV2AcceptsPassingCommandResultForTestCommand(t *testing.T)
 	}
 }
 
+func TestVerifySnapshotV2WarnsWhenTestEvidenceIsOnlyReported(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	cmd, ev := NewCommandEvidence(ReportedCommand{Command: "go test ./...", ExitCode: 0, TestResult: true}, snap.CapturedAt)
+	snap.Observed.Commands = []CommandObservedV2{cmd}
+	snap.Evidence = []EvidenceV2{ev}
+	snap.Interpretation.StatusItems = []StatusItemV2{{
+		ID:           "status_tests",
+		Text:         "Tests pass",
+		State:        "claimed_done",
+		EvidenceRefs: []string{ev.ID},
+	}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "commands.test_evidence_source", VerifyWarn) {
+		t.Fatalf("expected warning for agent-reported test evidence: %+v", result.Checks)
+	}
+}
+
+func TestVerifySnapshotV2TrustsCollectedTestEvidence(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	cmd, ev := NewCollectedCommandEvidence(ReportedCommand{Command: "go test ./...", ExitCode: 0, TestResult: true}, snap.CapturedAt)
+	snap.Observed.Commands = []CommandObservedV2{cmd}
+	snap.Evidence = []EvidenceV2{ev}
+	snap.Interpretation.StatusItems = []StatusItemV2{{
+		ID:           "status_tests",
+		Text:         "Tests pass",
+		State:        "claimed_done",
+		EvidenceRefs: []string{ev.ID},
+	}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	for _, check := range result.Checks {
+		if check.ID == "commands.test_evidence_source" || (check.ID == "commands.test_claims" && check.Status != VerifyPass) {
+			t.Fatalf("collected test evidence should verify cleanly: %+v", result.Checks)
+		}
+	}
+}
+
 func TestVerifySnapshotV2DetectsHighQuestionsAndRisks(t *testing.T) {
 	root := t.TempDir()
 	snap := verifyBaseSnapshot()
@@ -248,4 +288,24 @@ func checkMessageContains(result VerifyResult, id, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestVerifySnapshotV2ModelClaimIsNotEvidence(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	claim := EvidenceV2{ID: "ev_claim_1", Type: EvidenceTypeModelClaim, Source: "model.interpretation", ObservedAt: snap.CapturedAt}
+	todo := EvidenceV2{ID: "ev_claim_2", Type: EvidenceTypeModelClaim, Source: "model.interpretation", ObservedAt: snap.CapturedAt}
+	snap.Evidence = []EvidenceV2{claim, todo}
+	snap.Interpretation.StatusItems = []StatusItemV2{
+		{ID: "status_done", Text: "validateToken() implemented", State: "claimed_done", EvidenceRefs: []string{claim.ID}},
+		{ID: "status_todo", Text: "revokeToken()", State: "not_started", EvidenceRefs: []string{todo.ID}},
+	}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "claims.evidence", VerifyWarn) {
+		t.Fatalf("a claim backed only by model_claim should lack evidence: %+v", result.Checks)
+	}
+	if !checkMessageContains(result, "claims.evidence", "1 status claim") {
+		t.Fatalf("not_started items should not count as unevidenced claims: %+v", result.Checks)
+	}
 }

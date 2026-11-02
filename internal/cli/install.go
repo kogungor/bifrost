@@ -2,7 +2,6 @@ package cli
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +28,7 @@ var (
 )
 
 func init() {
-	installCmd.Flags().StringVar(&installAdapterFlag, "adapter", "", "Install for a specific adapter only (claude-code, opencode)")
+	installCmd.Flags().StringVar(&installAdapterFlag, "adapter", "", "Install for a specific adapter only (claude-code, opencode, codex)")
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Overwrite existing command files")
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "Print what would happen without doing it")
 	installCmd.Flags().BoolVar(&installMCP, "mcp", false, "Also register Bifrost as an MCP server")
@@ -42,7 +41,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if installAdapterFlag != "" {
 		a := adapters.Get(installAdapterFlag)
 		if a == nil {
-			ui.Error(fmt.Sprintf("Unknown adapter: %s", installAdapterFlag), "Available: claude-code, opencode")
+			ui.Error(fmt.Sprintf("Unknown adapter: %s", installAdapterFlag), "Available: claude-code, opencode, codex")
 			return fmt.Errorf("unknown adapter")
 		}
 		targets = append(targets, a)
@@ -67,7 +66,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if installed == 0 && installAdapterFlag == "" {
 		ui.Blank()
 		ui.Warning("No AI tools detected.")
-		ui.Dim("Install Claude Code or OpenCode, then run 'bifrost install' again.")
+		ui.Dim("Install Claude Code, OpenCode, or Codex, then run 'bifrost install' again.")
 	}
 
 	if installMCP {
@@ -88,6 +87,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// bifrostCommands are the commands installed for every adapter.
+var bifrostCommands = []string{"handoff", "handin", "plan", "review"}
+
 func installAdapterCommands(a adapters.Adapter) error {
 	cmdsDir := a.CommandsDir()
 	adapterName := a.Name()
@@ -97,18 +99,14 @@ func installAdapterCommands(a adapters.Adapter) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(cmdsDir, 0755); err != nil {
-		return err
-	}
-
-	for _, name := range []string{"handoff.md", "handin.md", "plan.md", "review.md"} {
-		src := fmt.Sprintf("commands/%s/%s", adapterName, name)
+	for _, name := range bifrostCommands {
+		src := fmt.Sprintf("commands/%s/%s.md", adapterName, name)
 		data, err := CommandsFS.ReadFile(src)
 		if err != nil {
 			return fmt.Errorf("embedded command %s: %w", src, err)
 		}
 
-		dest := filepath.Join(cmdsDir, name)
+		dest := a.CommandPath(name)
 
 		if !installForce {
 			if _, err := os.Stat(dest); err == nil {
@@ -117,6 +115,9 @@ func installAdapterCommands(a adapters.Adapter) error {
 			}
 		}
 
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return err
+		}
 		if err := os.WriteFile(dest, data, 0600); err != nil {
 			return err
 		}
@@ -127,29 +128,15 @@ func installAdapterCommands(a adapters.Adapter) error {
 }
 
 func installMCPConfig(a adapters.Adapter, mcpPath string) error {
-	// Read existing config if present
-	config := make(map[string]any)
-	data, err := os.ReadFile(mcpPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("parse existing %s: %w", mcpPath, err)
-		}
+	data, err := readConfigFile(mcpPath)
+	if err != nil {
+		return err
 	}
 
-	// Ensure mcpServers key exists and is a valid map
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok {
-		if config["mcpServers"] != nil {
-			return fmt.Errorf("mcpServers in %s is not a JSON object", mcpPath)
-		}
-		servers = make(map[string]any)
-		config["mcpServers"] = servers
-	}
-
-	// Add bifrost entry
-	servers["bifrost"] = map[string]any{
-		"command": "bifrost",
-		"args":    []string{"mcp-serve"},
+	// The adapter knows the tool's format (JSON "mcpServers", JSON "mcp", TOML "mcp_servers")
+	out, err := a.AddMCPServer(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", mcpPath, err)
 	}
 
 	if installDryRun {
@@ -157,20 +144,46 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 		return nil
 	}
 
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(mcpPath), 0700); err != nil {
-		return err
-	}
-
-	out, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(mcpPath, append(out, '\n'), 0600); err != nil {
+	if err := writeConfigFile(mcpPath, out); err != nil {
 		return err
 	}
 
 	ui.Success(fmt.Sprintf("%s  MCP server registered  (%s)", a.DisplayName(), mcpPath))
+	return nil
+}
+
+// readConfigFile returns a tool's config file contents, or nil when the file
+// does not exist yet.
+func readConfigFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return data, err
+}
+
+// writeConfigFile replaces path atomically, keeping its mode and following a
+// symlink so dotfile-managed configs stay linked.
+func writeConfigFile(path string, data []byte) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	mode := os.FileMode(0600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+
+	tmp := path + ".bifrost.tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
