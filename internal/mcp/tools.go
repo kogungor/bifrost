@@ -487,6 +487,9 @@ func (ts *ToolSet) readSnapshot() (any, error) {
 func (ts *ToolSet) readSnapshotState() (*snapshot.Snapshot, *snapshot.SnapshotV2, error) {
 	snapV2, err := snapshot.ReadSnapshotV2(ts.projectRoot)
 	if err == nil {
+		if legacy := snapshot.NewerMarkdownSnapshot(ts.projectRoot, snapV2); legacy != nil {
+			return legacy, nil, nil
+		}
 		return snapshot.SnapshotFromV2(snapV2), snapV2, nil
 	}
 	if !errors.Is(err, snapshot.ErrNoSnapshot) {

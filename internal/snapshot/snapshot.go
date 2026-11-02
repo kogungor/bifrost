@@ -166,8 +166,13 @@ func WriteNote(projectRoot string, note *HandoffNote) error {
 	b.WriteString("---\n\n")
 	b.WriteString(note.Text + "\n")
 
+	data, err := redactBeforeWrite(projectRoot, b.String())
+	if err != nil {
+		return err
+	}
+
 	tmp := NotePath(projectRoot) + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0600); err != nil {
+	if err := os.WriteFile(tmp, []byte(data), 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, NotePath(projectRoot))

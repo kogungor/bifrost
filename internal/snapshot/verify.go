@@ -392,10 +392,8 @@ func hasPassingTestEvidence(evidence []EvidenceV2, collectedOnly bool) bool {
 }
 
 func commandEvidenceLooksLikeTest(ev EvidenceV2) bool {
-	if command, ok := ev.Data["command"].(string); ok && strings.Contains(strings.ToLower(command), "test") {
-		return true
-	}
-	return strings.Contains(strings.ToLower(ev.Summary), "test")
+	command, _ := ev.Data["command"].(string)
+	return LooksLikeTestCommand(command)
 }
 
 func commandEvidencePassed(ev EvidenceV2) bool {
@@ -460,9 +458,27 @@ func LoadPlanStatus(projectRoot, name string) (string, error) {
 	return plan.Status, nil
 }
 
+// NewerMarkdownSnapshot returns session.md when it was written after
+// session.json, as happens when an agent without MCP runs /handoff after
+// Bifrost (for example a hook) wrote the JSON state. Otherwise it returns nil.
+func NewerMarkdownSnapshot(projectRoot string, snap *SnapshotV2) *Snapshot {
+	legacy, err := Read(projectRoot)
+	if err != nil || snap == nil || !legacy.Timestamp.After(snap.CapturedAt) {
+		return nil
+	}
+	return legacy
+}
+
 func SnapshotFromProject(projectRoot string) (*SnapshotV2, error) {
 	if fileExists(SnapshotJSONPath(projectRoot)) {
-		return ReadSnapshotV2(projectRoot)
+		snap, err := ReadSnapshotV2(projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		if legacy := NewerMarkdownSnapshot(projectRoot, snap); legacy != nil {
+			return SnapshotToV2(projectRoot, legacy), nil
+		}
+		return snap, nil
 	}
 	legacy, err := Read(projectRoot)
 	if err != nil {

@@ -21,6 +21,9 @@ const maxHashFileSize = 10 << 20
 type EnrichOptions struct {
 	ReportedCommands []ReportedCommand
 	ManualEvidence   []ManualEvidence
+	// TranscriptCommands come from the harness transcript; each keeps its own
+	// run time and is recorded as collector.transcript evidence.
+	TranscriptCommands []ReportedCommand
 }
 
 // EnrichSnapshotV2 adds deterministic observed facts and evidence records to a
@@ -72,6 +75,7 @@ func EnrichSnapshotV2WithOptions(projectRoot string, snap *SnapshotV2, opts Enri
 	commands, commandEvidence := reportedCommandEvidence(opts.ReportedCommands, now)
 	snap.Observed.Commands = mergeCommands(snap.Observed.Commands, commands)
 	evidence = append(evidence, commandEvidence...)
+	AddTranscriptCommands(snap, opts.TranscriptCommands, now)
 	for _, note := range opts.ManualEvidence {
 		if strings.TrimSpace(note.Text) != "" {
 			evidence = append(evidence, NewManualEvidence(note, now))
@@ -83,6 +87,54 @@ func EnrichSnapshotV2WithOptions(projectRoot string, snap *SnapshotV2, opts Enri
 	snap.Evidence = mergeEvidence(snap.Evidence, evidence)
 	ApplyTrustModelV2(snap)
 	return ValidateSnapshotV2(snap)
+}
+
+// AddTranscriptCommands records command results read from a harness
+// transcript as collector.transcript evidence, replacing those from an earlier
+// capture of the same session. Unlike EnrichSnapshotV2 it does not re-collect
+// git or file facts, so a handoff's baseline for drift checks is kept.
+func AddTranscriptCommands(snap *SnapshotV2, commands []ReportedCommand, now time.Time) {
+	if len(commands) == 0 {
+		return
+	}
+	dropTranscriptEvidence(snap)
+	evidence := make([]EvidenceV2, 0, len(commands))
+	for _, command := range commands {
+		observedAt := command.CapturedAt
+		if observedAt.IsZero() {
+			observedAt = now
+		}
+		cmd, ev := newCommandEvidence(command, observedAt, EvidenceSourceCollectorTranscript)
+		snap.Observed.Commands = mergeCommands(snap.Observed.Commands, []CommandObservedV2{cmd})
+		evidence = append(evidence, ev)
+	}
+	snap.Evidence = mergeEvidence(snap.Evidence, evidence)
+	ApplyTrustModelV2(snap)
+}
+
+// dropTranscriptEvidence removes command evidence read from an earlier capture
+// of the same transcript. Each capture reads the whole session, so its result
+// replaces the previous one instead of piling up superseded runs.
+func dropTranscriptEvidence(snap *SnapshotV2) {
+	commandIDs := map[string]bool{}
+	evidence := snap.Evidence[:0]
+	for _, ev := range snap.Evidence {
+		if ev.Source == EvidenceSourceCollectorTranscript {
+			if id, ok := ev.Data["id"].(string); ok {
+				commandIDs[id] = true
+			}
+			continue
+		}
+		evidence = append(evidence, ev)
+	}
+	snap.Evidence = evidence
+	commands := snap.Observed.Commands[:0]
+	for _, cmd := range snap.Observed.Commands {
+		if !commandIDs[cmd.ID] {
+			commands = append(commands, cmd)
+		}
+	}
+	snap.Observed.Commands = commands
 }
 
 var errNotGitRepo = errors.New("not a git repository")
