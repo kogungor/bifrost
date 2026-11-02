@@ -27,6 +27,9 @@ const (
 	EvidenceSourceCollectorPrefix = "collector."
 	// EvidenceSourceCollectorCommand is a command Bifrost ran, e.g. `bifrost plan verify`.
 	EvidenceSourceCollectorCommand = "collector.command"
+	// EvidenceSourceCollectorTranscript is a command result Bifrost read from
+	// the agent harness's own transcript (the exit code the tool recorded).
+	EvidenceSourceCollectorTranscript = "collector.transcript"
 	// EvidenceSourceReportedCommand is a command result a caller (usually the
 	// previous agent) reported; Bifrost did not observe it.
 	EvidenceSourceReportedCommand = "reported.command"

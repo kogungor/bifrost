@@ -220,7 +220,7 @@ func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
 	if len(unverifiedTests) > 0 {
 		r.add(VerifyFail, "commands.test_claims", "Test-pass claim has no test_result or passing command_result evidence.", "Run or inspect tests before assuming they pass.")
 	} else {
-		r.add(VerifyPass, "commands.test_claims", "No unevidenced test-pass claims detected.", "")
+		r.add(VerifyPass, "commands.test_claims", "Test-pass claims have command evidence.", "")
 	}
 	if len(reportedOnlyTests) > 0 {
 		r.add(VerifyWarn, "commands.test_evidence_source", "Test-pass evidence was reported by the previous agent, not observed by Bifrost.", "Re-run the tests, or `bifrost plan verify`, before trusting the claim.")
@@ -392,10 +392,8 @@ func hasPassingTestEvidence(evidence []EvidenceV2, collectedOnly bool) bool {
 }
 
 func commandEvidenceLooksLikeTest(ev EvidenceV2) bool {
-	if command, ok := ev.Data["command"].(string); ok && strings.Contains(strings.ToLower(command), "test") {
-		return true
-	}
-	return strings.Contains(strings.ToLower(ev.Summary), "test")
+	command, _ := ev.Data["command"].(string)
+	return LooksLikeTestCommand(command)
 }
 
 func commandEvidencePassed(ev EvidenceV2) bool {
@@ -460,9 +458,27 @@ func LoadPlanStatus(projectRoot, name string) (string, error) {
 	return plan.Status, nil
 }
 
+// NewerMarkdownSnapshot returns session.md when it was written after
+// session.json, as happens when an agent without MCP runs /handoff after
+// Bifrost (for example a hook) wrote the JSON state. Otherwise it returns nil.
+func NewerMarkdownSnapshot(projectRoot string, snap *SnapshotV2) *Snapshot {
+	legacy, err := Read(projectRoot)
+	if err != nil || snap == nil || !legacy.Timestamp.After(snap.CapturedAt) {
+		return nil
+	}
+	return legacy
+}
+
 func SnapshotFromProject(projectRoot string) (*SnapshotV2, error) {
 	if fileExists(SnapshotJSONPath(projectRoot)) {
-		return ReadSnapshotV2(projectRoot)
+		snap, err := ReadSnapshotV2(projectRoot)
+		if err != nil {
+			return nil, err
+		}
+		if legacy := NewerMarkdownSnapshot(projectRoot, snap); legacy != nil {
+			return SnapshotToV2(projectRoot, legacy), nil
+		}
+		return snap, nil
 	}
 	legacy, err := Read(projectRoot)
 	if err != nil {

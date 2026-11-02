@@ -38,9 +38,9 @@ Verification summary
 - Safe next  Run `git status --short` and inspect changed active files.
 
 Verify this first
-- files.active_changed: Active files changed after snapshot: src/tokens.go.
-- claims.evidence: 3 status claim(s) lack evidence.
-- commands.test_evidence_source: Test-pass evidence was reported by the previous agent, not observed by Bifrost.
+- Active files changed after snapshot: src/tokens.go. Next: Inspect changed files before continuing.
+- 3 status claim(s) lack evidence. Next: Treat unevidenced status as model interpretation, not repo fact.
+- Test-pass evidence was reported by the previous agent, not observed by Bifrost. Next: Re-run the tests, or `bifrost plan verify`, before trusting the claim.
 
 Do not assume
 - Do not assume active files are unchanged.
@@ -99,6 +99,8 @@ bifrost brief --mode review    # compact briefing: implement, debug, review, or 
 bifrost diff                   # what changed since the previous snapshot
 ```
 
+**Automatic handoff (Claude Code).** `bifrost install --hooks` registers Claude Code hooks. Before a compaction and when a session ends, Bifrost records the commands the agent actually ran, with the exit codes from Claude Code's own transcript, and the files it edited. The compaction summary is kept as the handoff note, and a resumed or compacted session starts with the briefing. If no `/handoff` was written, an automatic snapshot holds the observed facts. Hooks act only in projects that already use Bifrost.
+
 **Plans across tools.** `/plan <name>` in one tool writes a structured plan; `/review <name>` in another critiques it and approves it or sends it back. Steps can list verification commands: `bifrost plan verify <name>` shows them, asks before running them, and marks passing steps `verified_done`.
 
 The [reference](docs/reference.md) covers every command, flag, file, and MCP tool.
@@ -109,6 +111,7 @@ The [reference](docs/reference.md) covers every command, flag, file, and MCP too
 | ------------------------------------------ | ----------------------------------------------------------- | ------------------------- |
 | Observed by Bifrost (`collector.*`)        | branch, commit, file metadata, `bifrost plan verify` results | strong evidence           |
 | Reported by the agent (`reported.command`) | "ran `go test ./...`, exit 0"                               | medium: a detailed claim  |
+| Recorded by the harness (`collector.transcript`) | exit codes from the Claude Code transcript, via `--hooks` | strong evidence           |
 | Model claim                                | "[x] validateToken() implemented" with nothing behind it    | not evidence              |
 
 MCP callers cannot label their own evidence as `collector.*`.

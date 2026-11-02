@@ -2064,3 +2064,131 @@ func TestInstallCodexSkillsAndMCP(t *testing.T) {
 		t.Errorf("doctor should report Codex MCP registered:\n%s", out)
 	}
 }
+
+func runBifrostInput(t *testing.T, dir, input string, args ...string) (string, string, int) {
+	t.Helper()
+	cmd := exec.Command(binaryPath, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+dir, "XDG_CONFIG_HOME=", "CODEX_HOME=", "NO_COLOR=1")
+	cmd.Stdin = strings.NewReader(input)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		code = exitErr.ExitCode()
+	}
+	return stdout.String(), stderr.String(), code
+}
+
+func hookJSON(fields map[string]any) string {
+	data, _ := json.Marshal(fields)
+	return string(data)
+}
+
+func TestInstallHooksAndDoctor(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"theme": "dark"}`), 0644)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "claude-code", "--hooks")
+	if code != 0 || !strings.Contains(out, "hooks registered") {
+		t.Fatalf("install --hooks failed (exit %d):\n%s", code, out)
+	}
+	runBifrost(t, home, "install", "--adapter", "claude-code", "--hooks", "--force")
+	data, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(string(data), `"theme": "dark"`) || strings.Count(string(data), "bifrost hook session-start") != 1 {
+		t.Fatalf("settings.json not merged idempotently:\n%s", data)
+	}
+
+	out, _, _ = runBifrost(t, home, "doctor", "--project", home)
+	if !strings.Contains(out, "hooks registered") {
+		t.Errorf("doctor should report hooks:\n%s", out)
+	}
+}
+
+func TestHookIgnoresProjectsWithoutBifrost(t *testing.T) {
+	home := t.TempDir()
+	transcript := filepath.Join(home, "t.jsonl")
+	os.WriteFile(transcript, []byte(`{"type":"user","timestamp":"2026-11-02T10:00:00Z"}`+"\n"), 0600)
+	for _, event := range []string{"pre-compact", "post-compact", "session-start", "session-end"} {
+		out, stderr, code := runBifrostInput(t, home, hookJSON(map[string]any{
+			"cwd": home, "transcript_path": transcript, "source": "resume", "compact_summary": "summary",
+		}), "hook", event)
+		if code != 0 || out != "" || stderr != "" {
+			t.Errorf("%s in a non-Bifrost project should do nothing (exit %d): %q %q", event, code, out, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".bifrost")); !os.IsNotExist(err) {
+		t.Error("hooks must not create .bifrost/ in projects that never used Bifrost")
+	}
+
+	if _, _, code := runBifrostInput(t, home, "not json", "hook", "pre-compact"); code != 0 {
+		t.Errorf("invalid hook input must not fail the session, exit %d", code)
+	}
+}
+
+func TestHookPreCompactCapturesTranscript(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".bifrost"), 0700)
+	lines := []string{
+		`{"type":"user","timestamp":"2026-11-02T10:00:00Z","cwd":"` + home + `","message":{"role":"user","content":"start"}}`,
+		`{"type":"assistant","timestamp":"2026-11-02T10:01:00Z","cwd":"` + home + `","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
+		`{"type":"user","timestamp":"2026-11-02T10:02:00Z","cwd":"` + home + `","toolUseResult":{"stdout":"ok","stderr":"","interrupted":false},"message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"ok"}]}}`,
+	}
+	transcript := filepath.Join(home, "t.jsonl")
+	os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+
+	_, stderr, code := runBifrostInput(t, home, hookJSON(map[string]any{
+		"cwd": home, "transcript_path": transcript, "trigger": "auto", "hook_event_name": "PreCompact",
+	}), "hook", "pre-compact")
+	if code != 0 || stderr != "" {
+		t.Fatalf("pre-compact failed (exit %d): %s", code, stderr)
+	}
+	snap, err := snapshot.ReadSnapshotV2(home)
+	if err != nil {
+		t.Fatalf("no snapshot written: %v", err)
+	}
+	found := false
+	for _, ev := range snap.Evidence {
+		if ev.Source == snapshot.EvidenceSourceCollectorTranscript {
+			found = true
+		}
+	}
+	if !found || snap.Session.Pressure != "high" {
+		t.Fatalf("expected transcript evidence and high pressure: %+v", snap.Session)
+	}
+
+	out, _, code := runBifrostInput(t, home, hookJSON(map[string]any{"cwd": home, "source": "compact"}), "hook", "session-start")
+	if code != 0 || !strings.Contains(out, "Bifrost handoff") || !strings.Contains(out, "Verification summary") {
+		t.Fatalf("session-start should print the briefing (exit %d):\n%s", code, out)
+	}
+	out, _, _ = runBifrostInput(t, home, hookJSON(map[string]any{"cwd": home, "source": "startup"}), "hook", "session-start")
+	if !strings.Contains(out, "/handin --verify") || strings.Contains(out, "Verification summary") {
+		t.Fatalf("startup should print a one-line pointer only:\n%s", out)
+	}
+}
+
+func TestHookPostCompactKeepsAgentNote(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".bifrost"), 0700)
+	input := hookJSON(map[string]any{"cwd": home, "compact_summary": "We fixed the login bug."})
+
+	if _, _, code := runBifrostInput(t, home, input, "hook", "post-compact"); code != 0 {
+		t.Fatalf("post-compact failed (exit %d)", code)
+	}
+	note, err := snapshot.ReadNote(home)
+	if err != nil || note == nil || !strings.Contains(note.Text, "login bug") {
+		t.Fatalf("summary not saved: %+v %v", note, err)
+	}
+
+	// A note the agent wrote itself must survive; without a transcript the
+	// session start is unknown, so the hook leaves it alone.
+	snapshot.WriteNote(home, &snapshot.HandoffNote{Timestamp: time.Now().UTC().Format(time.RFC3339), From: "claude-code", Text: "agent note"})
+	runBifrostInput(t, home, input, "hook", "post-compact")
+	note, _ = snapshot.ReadNote(home)
+	if note.Text != "agent note" {
+		t.Fatalf("agent note was overwritten: %+v", note)
+	}
+}
