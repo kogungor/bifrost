@@ -3,6 +3,7 @@ package adapters
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,9 @@ func TestClaudeCodePaths(t *testing.T) {
 	if a.CommandsDir() != "/home/user/.claude/commands" {
 		t.Errorf("unexpected commands dir: %s", a.CommandsDir())
 	}
+	if a.CommandPath("handin") != "/home/user/.claude/commands/handin.md" {
+		t.Errorf("unexpected command path: %s", a.CommandPath("handin"))
+	}
 	if a.MCPConfigPath() != "/home/user/.claude.json" {
 		t.Errorf("unexpected MCP config: %s", a.MCPConfigPath())
 	}
@@ -34,36 +38,42 @@ func TestClaudeCodePaths(t *testing.T) {
 
 func TestClaudeCodeAddMCPServer(t *testing.T) {
 	a := &ClaudeCode{homeDir: "/home/user"}
-	config := map[string]any{
-		"numStartups": 3,
-		"mcpServers":  map[string]any{"other": map[string]any{"command": "other"}},
-	}
-	if a.HasMCPServer(config) {
+	in := []byte(`{"numStartups": 12345678901234567, "note": "<b>&</b>", "mcpServers": {"other": {"command": "other"}}}`)
+	if a.HasMCPServer(in) {
 		t.Fatal("HasMCPServer before AddMCPServer")
 	}
-	if err := a.AddMCPServer(config); err != nil {
+	out, err := a.AddMCPServer(in)
+	if err != nil {
 		t.Fatalf("AddMCPServer: %v", err)
 	}
-	if !a.HasMCPServer(config) {
-		t.Fatal("HasMCPServer after AddMCPServer")
+	if !a.HasMCPServer(out) {
+		t.Fatalf("HasMCPServer after AddMCPServer:\n%s", out)
 	}
-	servers := config["mcpServers"].(map[string]any)
-	if _, ok := servers["other"]; !ok {
-		t.Error("existing server was dropped")
+	for _, want := range []string{`"other"`, `"numStartups": 12345678901234567`, `"note": "<b>&</b>"`, `"type": "stdio"`, `"mcp-serve"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %s:\n%s", want, out)
+		}
 	}
-	entry := servers["bifrost"].(map[string]any)
-	if entry["type"] != "stdio" || entry["command"] != "bifrost" {
-		t.Errorf("unexpected entry: %v", entry)
+}
+
+func TestClaudeCodeAddMCPServerToMissingFile(t *testing.T) {
+	a := &ClaudeCode{homeDir: "/home/user"}
+	out, err := a.AddMCPServer(nil)
+	if err != nil {
+		t.Fatalf("AddMCPServer: %v", err)
 	}
-	if config["numStartups"] != 3 {
-		t.Error("unrelated key was changed")
+	if !a.HasMCPServer(out) {
+		t.Fatalf("entry missing:\n%s", out)
 	}
 }
 
 func TestClaudeCodeAddMCPServerRejectsNonObject(t *testing.T) {
 	a := &ClaudeCode{homeDir: "/home/user"}
-	if err := a.AddMCPServer(map[string]any{"mcpServers": []any{}}); err == nil {
+	if _, err := a.AddMCPServer([]byte(`{"mcpServers": []}`)); err == nil {
 		t.Fatal("expected error when mcpServers is not an object")
+	}
+	if _, err := a.AddMCPServer([]byte(`{not json`)); err == nil {
+		t.Fatal("expected error for invalid JSON")
 	}
 }
 

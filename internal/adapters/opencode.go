@@ -52,23 +52,35 @@ func (a *OpenCode) MCPConfigPath() string {
 
 func (a *OpenCode) InstructionFile() string { return "AGENTS.md" }
 
+func (a *OpenCode) CommandPath(name string) string {
+	return markdownCommandPath(a.CommandsDir(), name)
+}
+
 // AddMCPServer writes a local server under "mcp", the documented layout.
 // Configs already using the nested "mcp.servers" layout get it there instead.
-func (a *OpenCode) AddMCPServer(config map[string]any) error {
+func (a *OpenCode) AddMCPServer(data []byte) ([]byte, error) {
+	config, err := parseJSONConfig(data)
+	if err != nil {
+		return nil, err
+	}
 	mcp, err := childObject(config, "mcp")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	command := []string{"bifrost", "mcp-serve"}
 	if servers, ok := mcp["servers"].(map[string]any); ok {
 		servers["bifrost"] = map[string]any{"type": "local", "command": command}
-		return nil
+	} else {
+		mcp["bifrost"] = map[string]any{"type": "local", "command": command, "enabled": true}
 	}
-	mcp["bifrost"] = map[string]any{"type": "local", "command": command, "enabled": true}
-	return nil
+	return encodeJSONConfig(config)
 }
 
-func (a *OpenCode) HasMCPServer(config map[string]any) bool {
+func (a *OpenCode) HasMCPServer(data []byte) bool {
+	config, err := parseJSONConfig(data)
+	if err != nil {
+		return false
+	}
 	return hasChild(config, "mcp", "bifrost") || hasChild(config, "mcp", "servers", "bifrost")
 }
 

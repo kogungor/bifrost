@@ -37,11 +37,19 @@ func (a *ClaudeCode) MCPConfigPath() string {
 
 func (a *ClaudeCode) InstructionFile() string { return "CLAUDE.md" }
 
+func (a *ClaudeCode) CommandPath(name string) string {
+	return markdownCommandPath(a.CommandsDir(), name)
+}
+
 // AddMCPServer writes the same entry as `claude mcp add --scope user`.
-func (a *ClaudeCode) AddMCPServer(config map[string]any) error {
+func (a *ClaudeCode) AddMCPServer(data []byte) ([]byte, error) {
+	config, err := parseJSONConfig(data)
+	if err != nil {
+		return nil, err
+	}
 	servers, err := childObject(config, "mcpServers")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	servers["bifrost"] = map[string]any{
 		"type":    "stdio",
@@ -49,11 +57,12 @@ func (a *ClaudeCode) AddMCPServer(config map[string]any) error {
 		"args":    []string{"mcp-serve"},
 		"env":     map[string]any{},
 	}
-	return nil
+	return encodeJSONConfig(config)
 }
 
-func (a *ClaudeCode) HasMCPServer(config map[string]any) bool {
-	return hasChild(config, "mcpServers", "bifrost")
+func (a *ClaudeCode) HasMCPServer(data []byte) bool {
+	config, err := parseJSONConfig(data)
+	return err == nil && hasChild(config, "mcpServers", "bifrost")
 }
 
 // LegacyPaths: Bifrost <= 1.3 registered MCP in ~/.claude/mcp.json, which
