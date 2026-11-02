@@ -289,3 +289,23 @@ func checkMessageContains(result VerifyResult, id, want string) bool {
 	}
 	return false
 }
+
+func TestVerifySnapshotV2ModelClaimIsNotEvidence(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	claim := EvidenceV2{ID: "ev_claim_1", Type: EvidenceTypeModelClaim, Source: "model.interpretation", ObservedAt: snap.CapturedAt}
+	todo := EvidenceV2{ID: "ev_claim_2", Type: EvidenceTypeModelClaim, Source: "model.interpretation", ObservedAt: snap.CapturedAt}
+	snap.Evidence = []EvidenceV2{claim, todo}
+	snap.Interpretation.StatusItems = []StatusItemV2{
+		{ID: "status_done", Text: "validateToken() implemented", State: "claimed_done", EvidenceRefs: []string{claim.ID}},
+		{ID: "status_todo", Text: "revokeToken()", State: "not_started", EvidenceRefs: []string{todo.ID}},
+	}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "claims.evidence", VerifyWarn) {
+		t.Fatalf("a claim backed only by model_claim should lack evidence: %+v", result.Checks)
+	}
+	if !checkMessageContains(result, "claims.evidence", "1 status claim") {
+		t.Fatalf("not_started items should not count as unevidenced claims: %+v", result.Checks)
+	}
+}

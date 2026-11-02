@@ -153,3 +153,29 @@ func briefFixture() (*SnapshotV2, VerifyResult, PlanExecutionSummary, time.Time)
 	}
 	return snap, verify, planSummary, now
 }
+
+func TestBuildBriefMarksVerifiedStaleFiles(t *testing.T) {
+	snap, verify, planSummary, now := briefFixture()
+	if len(snap.ActiveFiles) == 0 {
+		t.Fatal("fixture needs an active file")
+	}
+	path := snap.ActiveFiles[0].Path
+	snap.ActiveFiles[0].Trust.Freshness = FreshnessCurrent
+	verify.StaleActiveFiles = []string{path}
+
+	got := BuildBrief(snap, BriefOptions{
+		Mode:        BriefModeImplement,
+		Full:        true,
+		Now:         now,
+		Verify:      &verify,
+		PlanSummary: &planSummary,
+	}).Rendered
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, path) && strings.Contains(line, "freshness=current") {
+			t.Fatalf("changed file still shown as current:\n%s", got)
+		}
+	}
+	if snap.ActiveFiles[0].Trust.Freshness != FreshnessCurrent {
+		t.Fatal("BuildBrief must not mutate the caller's snapshot")
+	}
+}

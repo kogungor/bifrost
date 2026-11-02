@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1322,6 +1323,9 @@ func TestVerifyWarnExitCodeAndStrictMode(t *testing.T) {
 	}
 	if !strings.Contains(out, "git.status") {
 		t.Fatalf("expected git.status warning in output:\n%s", out)
+	}
+	if !regexp.MustCompile(`Next action\s+\S`).MatchString(out) {
+		t.Fatalf("next action label should be separated from its value:\n%s", out)
 	}
 
 	out, _, code = runBifrost(t, home, "verify", "--strict", "--project", home)
