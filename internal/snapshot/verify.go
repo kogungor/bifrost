@@ -34,6 +34,8 @@ type VerifyResult struct {
 	GeneratedAt           time.Time     `json:"generated_at"`
 	Checks                []VerifyCheck `json:"checks"`
 	RecommendedNextAction string        `json:"recommended_next_action"`
+	// StaleActiveFiles are active files missing or changed since the snapshot.
+	StaleActiveFiles []string `json:"stale_active_files,omitempty"`
 }
 
 type VerifyCheck struct {
@@ -177,6 +179,7 @@ func (r *VerifyResult) addFileChecks(projectRoot string, snap *SnapshotV2) {
 			changed = append(changed, active.Path)
 		}
 	}
+	r.StaleActiveFiles = append(append([]string{}, missing...), changed...)
 	if len(missing) > 0 {
 		r.add(VerifyFail, "files.active_exist", fmt.Sprintf("Missing active files: %s.", strings.Join(missing, ", ")), "Restore or remove missing active file references.")
 	} else {
@@ -192,15 +195,21 @@ func (r *VerifyResult) addFileChecks(projectRoot string, snap *SnapshotV2) {
 }
 
 func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
-	evidence := evidenceIDSet(snap.Evidence)
+	evidence := evidenceByID(snap.Evidence)
 	unevidenced := []string{}
 	unverifiedTests := []string{}
+	reportedOnlyTests := []string{}
 	for _, item := range snap.Interpretation.StatusItems {
-		if len(item.EvidenceRefs) == 0 || !allRefsExist(item.EvidenceRefs, evidence) {
+		// Not-started and invalidated items claim no progress to back up.
+		if item.State != "not_started" && item.State != "invalidated" && !hasSupportingEvidence(item.EvidenceRefs, evidence) {
 			unevidenced = append(unevidenced, item.Text)
 		}
-		if looksLikeTestClaim(item.Text) && !hasTestEvidence(snap.Evidence) {
-			unverifiedTests = append(unverifiedTests, item.Text)
+		if looksLikeTestClaim(item.Text) {
+			if !hasTestEvidence(snap.Evidence) {
+				unverifiedTests = append(unverifiedTests, item.Text)
+			} else if !hasCollectedTestEvidence(snap.Evidence) {
+				reportedOnlyTests = append(reportedOnlyTests, item.Text)
+			}
 		}
 	}
 	if len(unevidenced) > 0 {
@@ -212,6 +221,9 @@ func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
 		r.add(VerifyFail, "commands.test_claims", "Test-pass claim has no test_result or passing command_result evidence.", "Run or inspect tests before assuming they pass.")
 	} else {
 		r.add(VerifyPass, "commands.test_claims", "No unevidenced test-pass claims detected.", "")
+	}
+	if len(reportedOnlyTests) > 0 {
+		r.add(VerifyWarn, "commands.test_evidence_source", "Test-pass evidence was reported by the previous agent, not observed by Bifrost.", "Re-run the tests, or `bifrost plan verify`, before trusting the claim.")
 	}
 }
 
@@ -334,21 +346,20 @@ func sameStringSet(a, b []string) bool {
 	return true
 }
 
-func evidenceIDSet(evidence []EvidenceV2) map[string]bool {
-	set := map[string]bool{}
-	for _, ev := range evidence {
-		set[ev.ID] = true
-	}
-	return set
-}
-
-func allRefsExist(refs []string, evidence map[string]bool) bool {
+// hasSupportingEvidence reports whether every ref resolves and at least one is
+// more than the model_claim record Bifrost attaches to unbacked claims.
+func hasSupportingEvidence(refs []string, evidence map[string]EvidenceV2) bool {
+	supported := false
 	for _, ref := range refs {
-		if !evidence[ref] {
+		ev, ok := evidence[ref]
+		if !ok {
 			return false
 		}
+		if ev.Type != EvidenceTypeModelClaim {
+			supported = true
+		}
 	}
-	return true
+	return supported
 }
 
 func looksLikeTestClaim(text string) bool {
@@ -357,7 +368,19 @@ func looksLikeTestClaim(text string) bool {
 }
 
 func hasTestEvidence(evidence []EvidenceV2) bool {
+	return hasPassingTestEvidence(evidence, false)
+}
+
+// hasCollectedTestEvidence is hasTestEvidence limited to commands Bifrost ran itself.
+func hasCollectedTestEvidence(evidence []EvidenceV2) bool {
+	return hasPassingTestEvidence(evidence, true)
+}
+
+func hasPassingTestEvidence(evidence []EvidenceV2, collectedOnly bool) bool {
 	for _, ev := range evidence {
+		if collectedOnly && !IsCollectedEvidence(ev) {
+			continue
+		}
 		if ev.Type == EvidenceTypeTestResult && commandEvidencePassed(ev) {
 			return true
 		}

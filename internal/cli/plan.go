@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -37,8 +39,11 @@ var planNextCmd = &cobra.Command{
 var planVerifyCmd = &cobra.Command{
 	Use:   "verify <name>",
 	Short: "Run configured plan step verification commands",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runPlanVerify,
+	Long: "Runs the shell commands listed in the plan's step verification blocks. " +
+		"Plans are written by AI agents, so the commands are listed and confirmed before anything runs. " +
+		"Use --dry-run to only list them, or --yes to run them without the prompt.",
+	Args: cobra.ExactArgs(1),
+	RunE: runPlanVerify,
 }
 
 var planStepCmd = &cobra.Command{
@@ -52,9 +57,13 @@ var (
 	planStepClaimedDone  bool
 	planStepVerifiedDone bool
 	planStepBlocked      string
+	planVerifyYes        bool
+	planVerifyDryRun     bool
 )
 
 func init() {
+	planVerifyCmd.Flags().BoolVar(&planVerifyYes, "yes", false, "Run the listed commands without asking for confirmation")
+	planVerifyCmd.Flags().BoolVar(&planVerifyDryRun, "dry-run", false, "List the commands that would run without running them")
 	planStepCmd.Flags().BoolVar(&planStepClaimedDone, "claimed-done", false, "Mark the step claimed done")
 	planStepCmd.Flags().BoolVar(&planStepVerifiedDone, "verified-done", false, "Mark the step verified done")
 	planStepCmd.Flags().StringVar(&planStepBlocked, "blocked", "", "Mark the step blocked with a reason")
@@ -139,6 +148,45 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	queued := 0
+	for _, step := range plan.Steps {
+		if step.Verification != nil {
+			queued += len(step.Verification.Commands)
+		}
+	}
+	if queued == 0 {
+		ui.Warning("No plan verification commands configured.")
+		ui.Dim("Add verification.commands to the plan JSON or mark steps manually with `bifrost plan step`.")
+		printPlanStatus(root, plan)
+		return nil
+	}
+
+	// Plan files are written by AI agents; show exactly what will run first.
+	ui.Plain(fmt.Sprintf("Plan %s lists %d verification command(s), run with sh in %s:", plan.Name, queued, root))
+	for _, step := range plan.Steps {
+		if step.Verification == nil {
+			continue
+		}
+		for _, command := range step.Verification.Commands {
+			ui.Plain(fmt.Sprintf("  %-10s %s", step.ID, command))
+		}
+	}
+	if planVerifyDryRun {
+		ui.Dim("Dry run: nothing was executed.")
+		return nil
+	}
+	if !planVerifyYes {
+		ok, err := confirmPlanCommands()
+		if err != nil {
+			ui.Error("Plan verification needs confirmation.", "Review the commands with --dry-run, then re-run with --yes.")
+			return err
+		}
+		if !ok {
+			ui.Warning("Plan verification cancelled. Nothing was executed.")
+			return nil
+		}
+	}
+
 	var evidence []snapshot.EvidenceV2
 	ran := 0
 	failed := 0
@@ -154,7 +202,7 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 			if result.exitCode != 0 {
 				failed++
 			}
-			_, ev := snapshot.NewCommandEvidence(snapshot.ReportedCommand{
+			_, ev := snapshot.NewCollectedCommandEvidence(snapshot.ReportedCommand{
 				Command:    command,
 				ExitCode:   result.exitCode,
 				CapturedAt: now,
@@ -182,12 +230,6 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 		} else if step.Verification.LastResult != nil && step.Verification.LastResult.State == "fail" {
 			step.Status = "invalidated"
 		}
-	}
-	if ran == 0 {
-		ui.Warning("No plan verification commands configured.")
-		ui.Dim("Add verification.commands to the plan JSON or mark steps manually with `bifrost plan step`.")
-		printPlanStatus(root, plan)
-		return nil
 	}
 	if err := snapshot.WriteEvidenceRecordsV2(root, evidence); err != nil {
 		ui.Error("Could not write verification evidence.", err.Error())
@@ -249,6 +291,35 @@ func printPlanStatus(root string, plan *snapshot.PlanV2) {
 		ui.Plain(fmt.Sprintf("Missing files %d", summary.MissingFiles))
 	}
 	ui.Section("Next safest action", summary.NextAction)
+}
+
+// confirmPlanCommands asks on the terminal before plan commands run. It
+// refuses outright when stdin is not a terminal, so an agent's shell cannot
+// answer the prompt.
+func confirmPlanCommands() (bool, error) {
+	if !stdinIsTerminal() {
+		return false, fmt.Errorf("refusing to run plan commands without confirmation: stdin is not a terminal")
+	}
+	fmt.Print("Run these commands? [y/N] ")
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		fmt.Println()
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes", nil
+}
+
+// stdinIsTerminal reports whether stdin is an interactive character device.
+// /dev/null is a character device too, so it is excluded explicitly.
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if null, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, null) {
+		return false
+	}
+	return true
 }
 
 type commandRunResult struct {

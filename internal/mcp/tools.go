@@ -58,7 +58,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 				"properties": map[string]any{
 					"source_tool": map[string]any{
 						"type":        "string",
-						"description": "The AI tool writing the snapshot (e.g. claude-code, opencode)",
+						"description": "The AI tool writing the snapshot (e.g. claude-code, opencode, codex)",
 					},
 					"token_pressure": map[string]any{
 						"type":        "string",
@@ -226,7 +226,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 				"properties": map[string]any{
 					"source_tool": map[string]any{
 						"type":        "string",
-						"description": "The AI tool writing the plan (e.g. claude-code, opencode)",
+						"description": "The AI tool writing the plan (e.g. claude-code, opencode, codex)",
 					},
 					"title": map[string]any{
 						"type":        "string",
@@ -671,6 +671,9 @@ func validateEvidenceInputSizes(params writeSnapshotParams) error {
 		if len(ev.Source) > 100 {
 			return fmt.Errorf("evidence source exceeds 100 characters")
 		}
+		if isReservedEvidenceSource(ev.Source) {
+			return fmt.Errorf("evidence source %q is reserved for evidence Bifrost collects itself", ev.Source)
+		}
 		if len(ev.Summary) > maxFieldLen {
 			return fmt.Errorf("evidence summary exceeds %d characters", maxFieldLen)
 		}
@@ -682,11 +685,20 @@ func validateEvidenceInputSizes(params writeSnapshotParams) error {
 		if len(note.Source) > 100 {
 			return fmt.Errorf("manual_evidence source exceeds 100 characters")
 		}
+		if isReservedEvidenceSource(note.Source) {
+			return fmt.Errorf("manual_evidence source %q is reserved for evidence Bifrost collects itself", note.Source)
+		}
 		if len(note.Text) > maxFieldLen {
 			return fmt.Errorf("manual_evidence text exceeds %d characters", maxFieldLen)
 		}
 	}
 	return nil
+}
+
+// isReservedEvidenceSource reports whether a caller-supplied source would
+// impersonate evidence Bifrost observed itself.
+func isReservedEvidenceSource(source string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), snapshot.EvidenceSourceCollectorPrefix)
 }
 
 func reportedCommandsFromParams(params writeSnapshotParams) ([]snapshot.ReportedCommand, error) {

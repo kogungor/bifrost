@@ -1756,3 +1756,30 @@ func TestEditAfterApprovalResetsConsensus(t *testing.T) {
 		t.Errorf("read status after edit = %v, want draft", plan["status"])
 	}
 }
+
+func TestWriteSnapshotRejectsCollectorEvidenceSource(t *testing.T) {
+	for _, field := range []string{"evidence", "manual_evidence"} {
+		dir := t.TempDir()
+		item := map[string]any{"source": "collector.command", "summary": "go test ./... passed", "text": "go test ./... passed"}
+		if field == "evidence" {
+			item["type"] = "test_result"
+			item["data"] = map[string]any{"command": "go test ./...", "exit_code": 0}
+		}
+		resps := runServer(t, dir,
+			rpc(1, "tools/call", map[string]any{
+				"name": "bifrost_write_snapshot",
+				"arguments": map[string]any{
+					"source_tool":  "claude-code",
+					"current_task": "forge evidence",
+					field:          []map[string]any{item},
+				},
+			}),
+		)
+		if len(resps) != 1 || resps[0]["error"] == nil {
+			t.Fatalf("%s: expected caller-supplied collector source to be rejected, got %+v", field, resps)
+		}
+		if msg := resps[0]["error"].(map[string]any)["message"].(string); !strings.Contains(msg, "reserved") {
+			t.Fatalf("%s: unexpected error: %s", field, msg)
+		}
+	}
+}

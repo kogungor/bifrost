@@ -3,9 +3,11 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +43,8 @@ func runBifrost(t *testing.T, projectDir string, args ...string) (string, string
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+projectDir, // isolate home directory
+		"XDG_CONFIG_HOME=", // keep OpenCode config under the isolated home
+		"CODEX_HOME=",      // keep Codex config under the isolated home
 		"NO_COLOR=1",
 	)
 	var stdout, stderr bytes.Buffer
@@ -96,19 +100,25 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 		name        string
 		adapter     string
 		detectDir   string
-		commandsDir string
+		commandFile string // relative path with %s for the command name
 	}{
 		{
 			name:        "claude code",
 			adapter:     "claude-code",
 			detectDir:   ".claude",
-			commandsDir: filepath.Join(".claude", "commands"),
+			commandFile: filepath.Join(".claude", "commands", "%s.md"),
 		},
 		{
 			name:        "opencode",
 			adapter:     "opencode",
 			detectDir:   ".opencode",
-			commandsDir: filepath.Join(".opencode", "commands"),
+			commandFile: filepath.Join(".config", "opencode", "commands", "%s.md"),
+		},
+		{
+			name:        "codex",
+			adapter:     "codex",
+			detectDir:   ".codex",
+			commandFile: filepath.Join(".agents", "skills", "bifrost-%s", "SKILL.md"),
 		},
 	}
 
@@ -122,7 +132,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				t.Fatalf("install failed (exit %d): %s", code, out)
 			}
 
-			data, err := os.ReadFile(filepath.Join(home, tt.commandsDir, "handin.md"))
+			data, err := os.ReadFile(filepath.Join(home, fmt.Sprintf(tt.commandFile, "handin")))
 			if err != nil {
 				t.Fatalf("read installed handin.md: %v", err)
 			}
@@ -149,7 +159,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				}
 			}
 
-			data, err = os.ReadFile(filepath.Join(home, tt.commandsDir, "plan.md"))
+			data, err = os.ReadFile(filepath.Join(home, fmt.Sprintf(tt.commandFile, "plan")))
 			if err != nil {
 				t.Fatalf("read installed plan.md: %v", err)
 			}
@@ -207,16 +217,130 @@ func TestInstallMCPFlag(t *testing.T) {
 		t.Errorf("expected 'MCP server registered' in output, got:\n%s", out)
 	}
 
-	mcpPath := filepath.Join(home, ".claude", "mcp.json")
-	data, err := os.ReadFile(mcpPath)
+	// Claude Code reads user-scope MCP servers from ~/.claude.json
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
 	if err != nil {
-		t.Fatalf("mcp.json not created: %v", err)
+		t.Fatalf(".claude.json not created: %v", err)
 	}
-	if !strings.Contains(string(data), "bifrost") {
-		t.Errorf("mcp.json missing bifrost entry: %s", string(data))
+	var config struct {
+		MCPServers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
 	}
-	if !strings.Contains(string(data), "mcp-serve") {
-		t.Errorf("mcp.json missing mcp-serve arg: %s", string(data))
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse .claude.json: %v", err)
+	}
+	entry, ok := config.MCPServers["bifrost"]
+	if !ok {
+		t.Fatalf(".claude.json missing bifrost entry: %s", string(data))
+	}
+	if entry.Type != "stdio" || entry.Command != "bifrost" || len(entry.Args) != 1 || entry.Args[0] != "mcp-serve" {
+		t.Errorf("unexpected bifrost entry: %+v", entry)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "mcp.json")); !os.IsNotExist(err) {
+		t.Error("install should no longer write ~/.claude/mcp.json")
+	}
+}
+
+func TestInstallMCPPreservesClaudeConfig(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	existing := `{
+  "numStartups": 12345678901234567,
+  "tipsHistory": {"note": "<b>&</b>"},
+  "projects": {"/work/app": {"mcpServers": {"local-one": {"command": "x"}}}},
+  "mcpServers": {"other": {"type": "stdio", "command": "other", "args": []}}
+}`
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(existing), 0644)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "claude-code", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	path := filepath.Join(home, ".claude.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read .claude.json: %v", err)
+	}
+	for _, want := range []string{
+		`"numStartups": 12345678901234567`,
+		`"note": "<b>&</b>"`,
+		`"local-one"`,
+		`"other"`,
+		`"bifrost"`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf(".claude.json missing %s after install:\n%s", want, string(data))
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Errorf("file mode = %v, want 0644 preserved", info.Mode().Perm())
+	}
+}
+
+func TestInstallMCPOpenCode(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".config", "opencode")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{"$schema": "https://opencode.ai/config.json", "theme": "system"}`), 0644)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "opencode", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("read opencode.json: %v", err)
+	}
+	var config struct {
+		Theme      string         `json:"theme"`
+		MCPServers map[string]any `json:"mcpServers"`
+		MCP        map[string]struct {
+			Type    string   `json:"type"`
+			Command []string `json:"command"`
+			Enabled bool     `json:"enabled"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse opencode.json: %v", err)
+	}
+	entry, ok := config.MCP["bifrost"]
+	if !ok {
+		t.Fatalf("opencode.json missing mcp.bifrost: %s", string(data))
+	}
+	if entry.Type != "local" || !entry.Enabled || strings.Join(entry.Command, " ") != "bifrost mcp-serve" {
+		t.Errorf("unexpected bifrost entry: %+v", entry)
+	}
+	if config.MCPServers != nil {
+		t.Errorf("OpenCode ignores mcpServers; it must not be written: %s", string(data))
+	}
+	if config.Theme != "system" {
+		t.Errorf("existing keys were not preserved: %s", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "commands", "handin.md")); err != nil {
+		t.Errorf("commands not installed to ~/.config/opencode/commands: %v", err)
+	}
+}
+
+func TestDoctorReportsLegacyClaudeMCPConfig(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "mcp.json"), []byte(`{"mcpServers":{"bifrost":{"command":"bifrost","args":["mcp-serve"]}}}`), 0644)
+
+	out, _, _ := runBifrost(t, home, "doctor", "--project", home)
+	if !strings.Contains(out, "MCP server not registered") {
+		t.Errorf("legacy ~/.claude/mcp.json must not count as registered:\n%s", out)
+	}
+	if !strings.Contains(out, "old Bifrost files at "+filepath.Join(home, ".claude", "mcp.json")) {
+		t.Errorf("expected legacy path hint, got:\n%s", out)
 	}
 }
 
@@ -231,7 +355,7 @@ func TestDoctorHealthy(t *testing.T) {
 	os.WriteFile(filepath.Join(home, ".claude", "commands", "handin.md"), []byte("test"), 0644)
 	// Write MCP config with bifrost entry
 	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
-	os.WriteFile(filepath.Join(home, ".claude", "mcp.json"), []byte(`{"mcpServers":{"bifrost":{"command":"bifrost","args":["mcp-serve"]}}}`), 0644)
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"bifrost":{"type":"stdio","command":"bifrost","args":["mcp-serve"]}}}`), 0644)
 	os.MkdirAll(filepath.Join(home, ".git"), 0755)
 	os.WriteFile(filepath.Join(home, ".gitignore"), []byte(".bifrost/\n"), 0644)
 
@@ -1208,6 +1332,9 @@ func TestVerifyWarnExitCodeAndStrictMode(t *testing.T) {
 	if !strings.Contains(out, "git.status") {
 		t.Fatalf("expected git.status warning in output:\n%s", out)
 	}
+	if !regexp.MustCompile(`Next action\s+\S`).MatchString(out) {
+		t.Fatalf("next action label should be separated from its value:\n%s", out)
+	}
 
 	out, _, code = runBifrost(t, home, "verify", "--strict", "--project", home)
 	if code != 1 {
@@ -1342,7 +1469,7 @@ func TestPlanExecutionCommands(t *testing.T) {
 		t.Fatalf("plan next did not recommend verifying claimed step:\n%s", out)
 	}
 
-	out, _, code = runBifrost(t, home, "plan", "verify", "release", "--project", home)
+	out, _, code = runBifrost(t, home, "plan", "verify", "release", "--yes", "--project", home)
 	if code != 0 {
 		t.Fatalf("plan verify failed (exit %d):\n%s", code, out)
 	}
@@ -1365,6 +1492,11 @@ func TestPlanExecutionCommands(t *testing.T) {
 	}
 	if len(evidence) == 0 {
 		t.Fatal("expected plan verify to write evidence")
+	}
+	for _, ev := range evidence {
+		if ev.Source != snapshot.EvidenceSourceCollectorCommand {
+			t.Fatalf("plan verify evidence source = %q, want %q (Bifrost ran the command)", ev.Source, snapshot.EvidenceSourceCollectorCommand)
+		}
 	}
 
 	out, _, code = runBifrost(t, home, "plan", "step", "release", "step_2", "--blocked", "waiting for approval", "--project", home)
@@ -1406,7 +1538,7 @@ func TestPlanVerifyFailureExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _, code := runBifrost(t, home, "plan", "verify", "failing", "--project", home)
+	out, _, code := runBifrost(t, home, "plan", "verify", "failing", "--yes", "--project", home)
 	if code != 2 {
 		t.Fatalf("plan verify failure should exit 2, got %d:\n%s", code, out)
 	}
@@ -1824,5 +1956,111 @@ func TestStatusSnapshotSizeWarning(t *testing.T) {
 
 	if !strings.Contains(out, "large snapshot") {
 		t.Errorf("expected large snapshot warning in output, got:\n%s", out)
+	}
+}
+
+func TestPlanVerifyRequiresConfirmation(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &snapshot.PlanV2{
+		SchemaVersion: snapshot.PlanSchemaV2,
+		Name:          "guarded",
+		Title:         "Guarded Plan",
+		Goal:          "Do not run agent-written commands unasked",
+		Status:        snapshot.PlanStatusActive,
+		Version:       "v1",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Steps: []snapshot.PlanStepV2{{
+			ID:     "step_1",
+			Title:  "Touch marker",
+			Status: "claimed_done",
+			Verification: &snapshot.PlanStepVerificationV2{
+				Required: true,
+				Commands: []string{"touch ran-marker"},
+			},
+		}},
+	}
+	if err := snapshot.WritePlanV2(home, plan); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(home, "ran-marker")
+
+	out, _, code := runBifrost(t, home, "plan", "verify", "guarded", "--dry-run", "--project", home)
+	if code != 0 {
+		t.Fatalf("dry run failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "touch ran-marker") || !strings.Contains(out, "nothing was executed") {
+		t.Fatalf("dry run should list the command:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "plan", "verify", "guarded", "--project", home)
+	if code == 0 {
+		t.Fatalf("non-interactive run without --yes should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "--yes") {
+		t.Fatalf("refusal should explain --yes:\n%s", out)
+	}
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("plan command ran without confirmation")
+	}
+	read, err := snapshot.ReadPlanV2(home, "guarded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Steps[0].Status != "claimed_done" {
+		t.Fatalf("step status changed without running: %q", read.Steps[0].Status)
+	}
+}
+
+func TestInstallCodexSkillsAndMCP(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	os.MkdirAll(codexDir, 0755)
+	existing := "# keep this comment\nmodel = \"gpt-5\"\n"
+	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0600)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "codex", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), existing) {
+		t.Errorf("existing config.toml content was not preserved:\n%s", data)
+	}
+	if !strings.Contains(string(data), "[mcp_servers.bifrost]") || !strings.Contains(string(data), `args = ["mcp-serve"]`) {
+		t.Errorf("config.toml missing bifrost server:\n%s", data)
+	}
+
+	for _, name := range []string{"handoff", "handin", "plan", "review"} {
+		skill, err := os.ReadFile(filepath.Join(home, ".agents", "skills", "bifrost-"+name, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("skill %s not installed: %v", name, err)
+		}
+		if !strings.HasPrefix(string(skill), "---\nname: bifrost-"+name+"\ndescription: ") {
+			t.Errorf("skill %s has no Agent Skills frontmatter:\n%.200s", name, skill)
+		}
+		if strings.Contains(string(skill), "$ARGUMENTS") {
+			t.Errorf("skill %s still uses $ARGUMENTS, which Codex skills do not substitute", name)
+		}
+	}
+
+	// A second install must not append a duplicate table.
+	if _, _, code := runBifrost(t, home, "install", "--adapter", "codex", "--mcp", "--force"); code != 0 {
+		t.Fatalf("second install failed (exit %d)", code)
+	}
+	data, _ = os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if n := strings.Count(string(data), "[mcp_servers.bifrost]"); n != 1 {
+		t.Errorf("expected one bifrost table after reinstall, got %d:\n%s", n, data)
+	}
+
+	out, _, _ = runBifrost(t, home, "doctor", "--project", home)
+	if !strings.Contains(out, "Codex") || strings.Contains(out, "Codex                MCP server not registered") {
+		t.Errorf("doctor should report Codex MCP registered:\n%s", out)
 	}
 }

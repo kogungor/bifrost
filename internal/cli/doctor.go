@@ -50,8 +50,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		}
 
 		cmdsDir := a.CommandsDir()
-		handoff := filepath.Join(cmdsDir, "handoff.md")
-		handin := filepath.Join(cmdsDir, "handin.md")
+		handoff := a.CommandPath("handoff")
+		handin := a.CommandPath("handin")
 
 		handoffOK := fileExists(handoff)
 		handinOK := fileExists(handin)
@@ -83,7 +83,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		// MCP check — recommended for /handin (falls back to direct file read without it)
 		mcpPath := a.MCPConfigPath()
 		if mcpPath != "" {
-			if isMCPConfigured(mcpPath) {
+			if isMCPConfigured(a, mcpPath) {
 				ui.Success(fmt.Sprintf("%-20s MCP server registered", a.DisplayName()))
 			} else {
 				if doctorFix {
@@ -95,6 +95,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				} else {
 					ui.Warning(fmt.Sprintf("%-20s MCP server not registered (optional — run 'bifrost install --mcp' to enable)", a.DisplayName()))
 				}
+			}
+		}
+
+		for _, legacy := range a.LegacyPaths() {
+			if hasLegacyBifrostFiles(legacy) {
+				ui.Warning(fmt.Sprintf("%-20s old Bifrost files at %s", a.DisplayName(), legacy))
+				ui.Dim("  Bifrost no longer writes there. Remove them once 'bifrost install' has registered the current location.")
 			}
 		}
 	}
@@ -239,20 +246,35 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// isMCPConfigured returns true if the bifrost MCP server entry exists in the given config file.
-func isMCPConfigured(mcpPath string) bool {
-	data, err := os.ReadFile(mcpPath)
+// isMCPConfigured returns true if the adapter's config file registers the bifrost MCP server.
+func isMCPConfigured(a adapters.Adapter, mcpPath string) bool {
+	data, err := readConfigFile(mcpPath)
 	if err != nil {
 		return false
 	}
-	var config map[string]any
+	return a.HasMCPServer(data)
+}
+
+// hasLegacyBifrostFiles reports whether path holds slash commands or an
+// "mcpServers" entry written by an older Bifrost version.
+func hasLegacyBifrostFiles(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return fileExists(filepath.Join(path, "handoff.md")) || fileExists(filepath.Join(path, "handin.md"))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var config struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return false
 	}
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, found := servers["bifrost"]
+	_, found := config.MCPServers["bifrost"]
 	return found
 }

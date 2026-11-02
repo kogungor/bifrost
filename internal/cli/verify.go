@@ -112,7 +112,7 @@ func printVerifyHuman(result snapshot.VerifyResult) {
 		}
 	}
 	ui.Blank()
-	ui.Section("Recommended next action", result.RecommendedNextAction)
+	ui.Section("Next action", result.RecommendedNextAction)
 }
 
 func verifySymbol(status string) string {
