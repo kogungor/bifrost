@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **MCP 2026-07-28** — the server answers stateless requests that carry their version in `_meta`, including `server/discover`, and still negotiates 2024-11-05 through 2025-11-25 through `initialize`. Claude Code now connects over 2026-07-28; OpenCode and Codex keep using `initialize`.
+- **Tool annotations** — every MCP tool has a title and read-only/destructive/idempotent hints; tools that replace existing content are marked destructive.
+- **Secret detectors** — Stripe keys, Slack tokens and webhook URLs, and Google API keys are detected and redacted.
+
+### Changed
+
+- **MCP errors** — tool validation and business-rule failures are returned as `isError` results the model can read; unknown tools and malformed calls stay JSON-RPC errors. `ping` is supported.
+- **Briefings** — Trust this / Verify this first lines show messages without check IDs, and the passing test-claims check no longer reads as a contradiction of the reported-evidence warning.
+
+### Fixed
+
+- **MCP message size** — a message over 16 MB no longer stops the server; it is answered with an error and skipped. Parse errors use `-32700` with `"id": null`.
+- **`--budget` documentation** — the docs and `/handin` instructions now say the budget is in characters.
+
 ## [1.4.0] — 2026-11-02
 
 ### Added
