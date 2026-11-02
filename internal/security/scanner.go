@@ -177,6 +177,22 @@ var detectors = []detector{
 		re:   regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),
 	},
 	{
+		kind: "stripe_key",
+		re:   regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b`),
+	},
+	{
+		kind: "slack_token",
+		re:   regexp.MustCompile(`\b(?:xox[abposr]|xapp)-[A-Za-z0-9-]{10,}`),
+	},
+	{
+		kind: "slack_webhook",
+		re:   regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}`),
+	},
+	{
+		kind: "google_api_key",
+		re:   regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
+	},
+	{
 		kind: "bearer_token",
 		re:   regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}`),
 		redact: func(text string, match []int) string {

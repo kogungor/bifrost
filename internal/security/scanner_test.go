@@ -65,3 +65,30 @@ func hasFindingKind(findings []Finding, kind string) bool {
 	}
 	return false
 }
+
+func TestScanStringDetectsServiceTokens(t *testing.T) {
+	// Built from pieces so the source file itself does not look like a leaked
+	// credential to secret scanners.
+	alnum := strings.Repeat("a1B2c3D4", 4)
+	for kind, value := range map[string]string{
+		"stripe_key":     "sk_" + "live_" + alnum,
+		"slack_token":    "xox" + "b-1234567890-" + alnum,
+		"slack_webhook":  "https://hooks.slack" + ".com/services/T00000000/B00000000/" + alnum,
+		"google_api_key": "AI" + "za" + alnum[:32] + "xyz",
+	} {
+		text := "note: " + value + " end"
+		findings := ScanString(text, DefaultConfig())
+		if !hasFindingKind(findings, kind) {
+			t.Errorf("missing %s for %q: %#v", kind, value, findings)
+		}
+		redacted, _ := RedactString(text, DefaultConfig())
+		if strings.Contains(redacted, value) {
+			t.Errorf("%s not redacted: %s", kind, redacted)
+		}
+	}
+	for _, clean := range []string{"sk_live_short", "xoxb-short", "AIzaTooShort"} {
+		if findings := ScanString(clean, DefaultConfig()); len(findings) != 0 {
+			t.Errorf("false positive for %q: %#v", clean, findings)
+		}
+	}
+}
