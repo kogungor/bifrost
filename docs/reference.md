@@ -121,7 +121,7 @@ A healthy output looks like:
 ```
   Bifrost Doctor
 
-  ✓  Binary               1.4.0
+  ✓  Binary               1.5.0
   ✓  Claude Code          commands registered  (/path/to/commands)
   ✓  Claude Code          MCP server registered
   ✓  OpenCode             commands registered  (/path/to/commands)
@@ -366,6 +366,33 @@ bifrost plan verify auth-refactor             # list, confirm, then run
 
 Plan files are written by AI agents, so the command always lists what it will run and asks first. In a non-interactive shell (for example an agent's tool call) it refuses unless you pass `--yes`. A passing step becomes `verified_done`; a failing one becomes `invalidated` and the command exits with code 2.
 
+### Automatic Handoff (Claude Code Hooks)
+
+```bash
+bifrost install --hooks            # all detected tools that support hooks (Claude Code)
+bifrost install --adapter claude-code --hooks
+```
+
+This adds four hooks to `~/.claude/settings.json`, keeping everything else in the file:
+
+| Claude Code event | Command | What it does |
+| ----------------- | ------- | ------------ |
+| `PreCompact`  | `bifrost hook pre-compact`  | Reads the session transcript and records the Bash commands that ran in the project, with the exit codes Claude Code recorded, plus files changed with Edit/Write. |
+| `PostCompact` | `bifrost hook post-compact` | Saves Claude Code's compaction summary as `.bifrost/handoff.md`, unless the agent wrote its own note during this session. |
+| `SessionStart` | `bifrost hook session-start` | On `resume` or `compact`, prints the briefing so Claude Code adds it to context. On `startup`, prints a one-line pointer when a handoff from the last 24 hours exists. |
+| `SessionEnd`  | `bifrost hook session-end`  | Same capture as `PreCompact`. |
+
+How captures are written:
+
+- A handoff the agent wrote during this session (for example with `/handoff`) keeps everything it recorded, including its file baseline, so changes made after it still show up in `bifrost verify`. Only the transcript's command results are added.
+- A handoff from an earlier session, such as one written in Codex or OpenCode, is never changed. Reading it in Claude Code with `/handin` and leaving does not replace it.
+- Otherwise (no snapshot yet, or one an earlier hook wrote) an automatic snapshot is written. It holds only observed facts, lists the files edited this session, and says that no `/handoff` was written. The previous snapshot is archived.
+- Commands are recorded as `collector.transcript` evidence, which counts as strong: the exit code comes from Claude Code, not from the model's summary. Only the latest run of each command is kept. Interrupted, backgrounded and timed-out commands, results whose exit code Claude Code reinterpreted (such as `grep` with no match), and denied tool calls are skipped. A command counts as a test run only when it starts a test runner (`go test`, `npm test`, `pytest`, ...), not when it merely mentions a test file. Command text is redacted like other Bifrost state.
+- Nothing is written when the session ran no commands and edited no files.
+- The `SessionStart` output stays under Claude Code's 10,000-character limit for hook context.
+
+Hooks do nothing in a project without `.bifrost/` or `BIFROST.md`, so installing them user-wide does not touch other repositories. They never fail the session: problems go to stderr and the exit code is always 0. `bifrost doctor` reports whether the hooks are registered.
+
 ### Snapshot Freshness
 
 `/handin` always shows the snapshot age. If it's older than 2 hours, a warning is shown. If older than 24 hours, a prominent warning appears. You're never blocked — just informed.
@@ -478,6 +505,8 @@ REST API for the mobile app. Currently in beta.
 | ------------------------------------- | ------------------------------------------------ |
 | `bifrost install`                     | Register slash commands for detected AI tools    |
 | `bifrost install --mcp`               | Also register Bifrost as an MCP server           |
+| `bifrost install --hooks`             | Register Claude Code hooks for automatic handoff |
+| `bifrost hook <event>`                | Run from a hook: pre-compact, post-compact, session-start, session-end |
 | `bifrost init`                        | Initialize Bifrost in the current project        |
 | `bifrost status`                      | Show snapshot age, size, intent, and active plan |
 | `bifrost export`                      | Export snapshot and/or plans as JSON to stdout   |

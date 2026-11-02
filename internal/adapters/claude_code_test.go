@@ -92,3 +92,36 @@ func TestClaudeCodeDetection(t *testing.T) {
 		t.Error("should be installed with .claude dir")
 	}
 }
+
+func TestClaudeCodeAddHooks(t *testing.T) {
+	a := &ClaudeCode{homeDir: "/home/user"}
+	if a.HooksConfigPath() != "/home/user/.claude/settings.json" {
+		t.Errorf("unexpected hooks path: %s", a.HooksConfigPath())
+	}
+	in := []byte(`{"model": "opus", "hooks": {"PreCompact": [{"matcher": "manual", "hooks": [{"type": "command", "command": "./mine.sh"}]}]}}`)
+	if a.HasHooks(in) {
+		t.Fatal("HasHooks before AddHooks")
+	}
+	out, err := a.AddHooks(in)
+	if err != nil {
+		t.Fatalf("AddHooks: %v", err)
+	}
+	if !a.HasHooks(out) {
+		t.Fatalf("HasHooks after AddHooks:\n%s", out)
+	}
+	for _, want := range []string{`"model": "opus"`, `"./mine.sh"`, `"bifrost hook pre-compact"`, `"bifrost hook session-start"`, `"bifrost hook post-compact"`, `"bifrost hook session-end"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("settings missing %s:\n%s", want, out)
+		}
+	}
+	again, err := a.AddHooks(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(again), "bifrost hook pre-compact") != 1 {
+		t.Errorf("AddHooks should be idempotent:\n%s", again)
+	}
+	if _, err := a.AddHooks([]byte(`{"hooks": {"SessionStart": {}}}`)); err == nil {
+		t.Error("expected error when an event is not an array")
+	}
+}
