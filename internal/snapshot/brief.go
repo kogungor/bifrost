@@ -54,6 +54,9 @@ func BuildBrief(snap *SnapshotV2, opts BriefOptions) BriefResult {
 		return BriefResult{Mode: mode, BudgetChars: budget, Full: opts.Full, Rendered: rendered}
 	}
 
+	if opts.Verify != nil {
+		snap = withVerifiedFreshness(snap, opts.Verify)
+	}
 	sections := buildBriefSections(snap, mode, now, opts.Verify, opts.PlanSummary)
 	rendered, omitted := renderBriefSections(sections, budget, opts.Full)
 	return BriefResult{
@@ -63,6 +66,27 @@ func BuildBrief(snap *SnapshotV2, opts BriefOptions) BriefResult {
 		Rendered:    rendered,
 		Omitted:     omitted,
 	}
+}
+
+// withVerifiedFreshness returns a copy of snap with active files that verify
+// found missing or changed marked stale, so the briefing never shows
+// capture-time freshness next to a warning about the same file.
+func withVerifiedFreshness(snap *SnapshotV2, verify *VerifyResult) *SnapshotV2 {
+	if len(verify.StaleActiveFiles) == 0 {
+		return snap
+	}
+	stale := make(map[string]bool, len(verify.StaleActiveFiles))
+	for _, path := range verify.StaleActiveFiles {
+		stale[path] = true
+	}
+	copied := *snap
+	copied.ActiveFiles = append([]ActiveFileV2(nil), snap.ActiveFiles...)
+	for i := range copied.ActiveFiles {
+		if stale[copied.ActiveFiles[i].Path] {
+			copied.ActiveFiles[i].Trust.Freshness = FreshnessStale
+		}
+	}
+	return &copied
 }
 
 func normalizeBriefMode(mode string) string {

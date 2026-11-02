@@ -176,7 +176,13 @@ func evidenceTrust(refs []string, evidence map[string]EvidenceV2) string {
 		}
 		switch ev.Type {
 		case EvidenceTypeGitStatus, EvidenceTypeFileMetadata, EvidenceTypeDiffSummary, EvidenceTypeCommandResult, EvidenceTypeTestResult, EvidenceTypeProjectMetadata:
-			best = EvidenceStrong
+			// Only what Bifrost observed itself is strong; a caller-reported
+			// result (e.g. the previous agent's "exit 0") is a claim with detail.
+			if IsCollectedEvidence(ev) {
+				best = EvidenceStrong
+			} else if best != EvidenceStrong {
+				best = EvidenceMedium
+			}
 		case EvidenceTypeManualNote:
 			if best != EvidenceStrong {
 				best = EvidenceMedium

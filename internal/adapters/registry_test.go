@@ -6,8 +6,8 @@ import (
 
 func TestAllReturnsAdapters(t *testing.T) {
 	all := All()
-	if len(all) != 2 {
-		t.Fatalf("expected 2 adapters, got %d", len(all))
+	if len(all) != 3 {
+		t.Fatalf("expected 3 adapters, got %d", len(all))
 	}
 
 	names := map[string]bool{}
@@ -19,6 +19,9 @@ func TestAllReturnsAdapters(t *testing.T) {
 	}
 	if !names["opencode"] {
 		t.Error("missing opencode adapter")
+	}
+	if !names["codex"] {
+		t.Error("missing codex adapter")
 	}
 }
 
