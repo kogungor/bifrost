@@ -75,18 +75,7 @@ func EnrichSnapshotV2WithOptions(projectRoot string, snap *SnapshotV2, opts Enri
 	commands, commandEvidence := reportedCommandEvidence(opts.ReportedCommands, now)
 	snap.Observed.Commands = mergeCommands(snap.Observed.Commands, commands)
 	evidence = append(evidence, commandEvidence...)
-	if len(opts.TranscriptCommands) > 0 {
-		dropTranscriptEvidence(snap)
-	}
-	for _, command := range opts.TranscriptCommands {
-		observedAt := command.CapturedAt
-		if observedAt.IsZero() {
-			observedAt = now
-		}
-		cmd, ev := newCommandEvidence(command, observedAt, EvidenceSourceCollectorTranscript)
-		snap.Observed.Commands = mergeCommands(snap.Observed.Commands, []CommandObservedV2{cmd})
-		evidence = append(evidence, ev)
-	}
+	AddTranscriptCommands(snap, opts.TranscriptCommands, now)
 	for _, note := range opts.ManualEvidence {
 		if strings.TrimSpace(note.Text) != "" {
 			evidence = append(evidence, NewManualEvidence(note, now))
@@ -98,6 +87,29 @@ func EnrichSnapshotV2WithOptions(projectRoot string, snap *SnapshotV2, opts Enri
 	snap.Evidence = mergeEvidence(snap.Evidence, evidence)
 	ApplyTrustModelV2(snap)
 	return ValidateSnapshotV2(snap)
+}
+
+// AddTranscriptCommands records command results read from a harness
+// transcript as collector.transcript evidence, replacing those from an earlier
+// capture of the same session. Unlike EnrichSnapshotV2 it does not re-collect
+// git or file facts, so a handoff's baseline for drift checks is kept.
+func AddTranscriptCommands(snap *SnapshotV2, commands []ReportedCommand, now time.Time) {
+	if len(commands) == 0 {
+		return
+	}
+	dropTranscriptEvidence(snap)
+	evidence := make([]EvidenceV2, 0, len(commands))
+	for _, command := range commands {
+		observedAt := command.CapturedAt
+		if observedAt.IsZero() {
+			observedAt = now
+		}
+		cmd, ev := newCommandEvidence(command, observedAt, EvidenceSourceCollectorTranscript)
+		snap.Observed.Commands = mergeCommands(snap.Observed.Commands, []CommandObservedV2{cmd})
+		evidence = append(evidence, ev)
+	}
+	snap.Evidence = mergeEvidence(snap.Evidence, evidence)
+	ApplyTrustModelV2(snap)
 }
 
 // dropTranscriptEvidence removes command evidence read from an earlier capture

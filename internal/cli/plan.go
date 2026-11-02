@@ -207,7 +207,7 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 				ExitCode:   result.exitCode,
 				CapturedAt: now,
 				Summary:    result.summary,
-				TestResult: strings.Contains(strings.ToLower(command), "test"),
+				TestResult: snapshot.LooksLikeTestCommand(command),
 			}, now)
 			evidence = append(evidence, ev)
 			state := "pass"

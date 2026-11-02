@@ -1814,3 +1814,23 @@ func isFailure(resp map[string]any) bool {
 	_, failed := toolErrorObject(resp)
 	return failed
 }
+
+func TestReadSnapshotPrefersNewerMarkdownHandoff(t *testing.T) {
+	dir := t.TempDir()
+	older := &snapshot.Snapshot{BifrostVersion: snapshot.CurrentVersion, Timestamp: time.Now().UTC().Add(-time.Hour).Truncate(time.Second),
+		SourceTool: "claude-code", Project: "test", CurrentTask: "JSON state from a hook"}
+	if err := snapshot.WriteSnapshotV2(dir, snapshot.SnapshotToV2(dir, older)); err != nil {
+		t.Fatal(err)
+	}
+	newer := &snapshot.Snapshot{BifrostVersion: snapshot.CurrentVersion, Timestamp: time.Now().UTC().Truncate(time.Second),
+		SourceTool: "opencode", Project: "test", CurrentTask: "Markdown-only handoff"}
+	if err := snapshot.Write(dir, newer); err != nil {
+		t.Fatal(err)
+	}
+
+	resps := runServer(t, dir, rpc(1, "tools/call", map[string]any{"name": "bifrost_read_snapshot"}))
+	text := resps[0]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "Markdown-only handoff") || strings.Contains(text, "JSON state from a hook") {
+		t.Fatalf("read_snapshot should return the newer session.md:\n%s", text)
+	}
+}

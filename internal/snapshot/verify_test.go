@@ -309,3 +309,17 @@ func TestVerifySnapshotV2ModelClaimIsNotEvidence(t *testing.T) {
 		t.Fatalf("not_started items should not count as unevidenced claims: %+v", result.Checks)
 	}
 }
+
+func TestVerifySnapshotV2IgnoresCommandsThatOnlyMentionTests(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	cmd, ev := NewCollectedCommandEvidence(ReportedCommand{Command: "cat auth_test.go", ExitCode: 0}, snap.CapturedAt)
+	snap.Observed.Commands = []CommandObservedV2{cmd}
+	snap.Evidence = []EvidenceV2{ev}
+	snap.Interpretation.StatusItems = []StatusItemV2{{ID: "status_tests", Text: "Tests pass", State: "claimed_done", EvidenceRefs: []string{ev.ID}}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "commands.test_claims", VerifyFail) {
+		t.Fatalf("`cat auth_test.go` must not count as a passing test run: %+v", result.Checks)
+	}
+}

@@ -8,6 +8,10 @@ import (
 	"github.com/kogungor/bifrost/internal/security"
 )
 
+// AutoCaptureAgent marks snapshots that hooks wrote from a transcript, as
+// opposed to a /handoff an agent wrote. Only these are ever replaced.
+const AutoCaptureAgent = "bifrost hook"
+
 // maxCapturedEditedFiles caps how many transcript-edited files a capture adds
 // as active files.
 const maxCapturedEditedFiles = 10
@@ -25,17 +29,22 @@ type CaptureOptions struct {
 // CaptureResult reports what CaptureSession wrote.
 type CaptureResult struct {
 	Written  bool // a snapshot was written
-	Created  bool // the snapshot was created rather than merged into
+	Created  bool // an automatic snapshot was written rather than merged into a handoff
 	Commands int
 	Files    int
 }
 
-// CaptureSession records what a session observably did into the project's
-// snapshot. A snapshot written during this session (for example by /handoff)
-// keeps its interpretation and gains the transcript's commands and files; an
-// older snapshot, or none, is replaced by an automatic snapshot that records
-// only observed facts. Nothing is written when the transcript shows no
-// commands or edits.
+// CaptureSession records what a session observably did, without ever losing
+// a handoff an agent wrote:
+//   - a /handoff written during this session keeps everything it recorded
+//     (including its file baseline, so later drift still shows) and gains the
+//     transcript's command results;
+//   - a /handoff from an earlier session, e.g. from another tool, is left
+//     untouched;
+//   - otherwise (no snapshot, or one a hook wrote) an automatic snapshot of
+//     observed facts replaces it.
+//
+// Nothing is written when the transcript shows no commands or edits.
 func CaptureSession(projectRoot string, activity TranscriptActivity, opts CaptureOptions) (CaptureResult, error) {
 	var result CaptureResult
 	if len(activity.Commands) == 0 && len(activity.EditedFiles) == 0 {
@@ -46,65 +55,82 @@ func CaptureSession(projectRoot string, activity TranscriptActivity, opts Captur
 		now = time.Now().UTC()
 	}
 
-	snap, err := SnapshotFromProject(projectRoot)
+	existing, err := SnapshotFromProject(projectRoot)
 	if err != nil && !errors.Is(err, ErrNoSnapshot) {
 		return result, err
 	}
-	fromThisSession := err == nil && (activity.SessionStart.IsZero() || !snap.CapturedAt.Before(activity.SessionStart))
-	if !fromThisSession {
-		legacy := &Snapshot{
-			BifrostVersion: CurrentVersion,
-			Timestamp:      now,
-			SourceTool:     opts.SourceTool,
-			Project:        filepath.Base(projectRoot),
-			TokenPressure:  opts.Pressure,
-			CurrentTask:    "Session captured automatically; no /handoff was written",
-			NextStep:       "Review the observed commands and changed files, then ask the user how to continue.",
+	commands := redactCommands(projectRoot, activity.Commands)
+
+	if err == nil && existing.Source.Agent != AutoCaptureAgent {
+		if !activity.SessionStart.IsZero() && existing.CapturedAt.Before(activity.SessionStart) {
+			return result, nil
 		}
-		if !activity.SessionStart.IsZero() {
-			legacy.SessionStart = activity.SessionStart.UTC().Format(time.RFC3339)
-		}
-		// Keep session.md in step so /handin without MCP sees the same snapshot.
-		if err := Write(projectRoot, legacy); err != nil {
+		AddTranscriptCommands(existing, commands, now)
+		if err := ValidateSnapshotV2(existing); err != nil {
 			return result, err
 		}
-		snap = SnapshotToV2(projectRoot, legacy)
-		result.Created = true
+		if err := writeCapture(projectRoot, existing); err != nil {
+			return result, err
+		}
+		result.Written = true
+		result.Commands = len(commands)
+		return result, nil
 	}
 
-	cfg := security.LoadConfig(projectRoot)
-	commands := make([]ReportedCommand, 0, len(activity.Commands))
-	for _, command := range activity.Commands {
-		command.Command, _ = security.RedactString(command.Command, cfg)
-		commands = append(commands, command)
+	legacy := &Snapshot{
+		BifrostVersion: CurrentVersion,
+		Timestamp:      now,
+		SourceTool:     opts.SourceTool,
+		Project:        filepath.Base(projectRoot),
+		TokenPressure:  opts.Pressure,
+		CurrentTask:    "Session captured automatically; no /handoff was written",
+		NextStep:       "Review the observed commands and changed files, then ask the user how to continue.",
 	}
+	if !activity.SessionStart.IsZero() {
+		legacy.SessionStart = activity.SessionStart.UTC().Format(time.RFC3339)
+	}
+	// Keep session.md in step so /handin without MCP sees the same snapshot.
+	if err := Write(projectRoot, legacy); err != nil {
+		return result, err
+	}
+	snap := SnapshotToV2(projectRoot, legacy)
+	snap.Source.Agent = AutoCaptureAgent
 
-	known := map[string]bool{}
-	for _, file := range snap.ActiveFiles {
-		known[file.Path] = true
-	}
 	edited := activity.EditedFiles
 	if len(edited) > maxCapturedEditedFiles {
 		edited = edited[len(edited)-maxCapturedEditedFiles:]
 	}
 	for _, path := range edited {
-		if known[path] || !IsSafeRelativePath(path) {
-			continue
+		if IsSafeRelativePath(path) {
+			snap.ActiveFiles = append(snap.ActiveFiles, ActiveFileV2{Path: path, Note: "edited this session (from the " + opts.SourceTool + " transcript)"})
+			result.Files++
 		}
-		snap.ActiveFiles = append(snap.ActiveFiles, ActiveFileV2{Path: path, Note: "edited this session (from the " + opts.SourceTool + " transcript)"})
-		result.Files++
 	}
-
 	if err := EnrichSnapshotV2WithOptions(projectRoot, snap, EnrichOptions{TranscriptCommands: commands}); err != nil {
 		return result, err
 	}
-	if err := WriteSnapshotV2(projectRoot, snap); err != nil {
-		return result, err
-	}
-	if err := WriteEvidenceRecordsV2(projectRoot, snap.Evidence); err != nil {
+	if err := writeCapture(projectRoot, snap); err != nil {
 		return result, err
 	}
 	result.Written = true
+	result.Created = true
 	result.Commands = len(commands)
 	return result, nil
+}
+
+func writeCapture(projectRoot string, snap *SnapshotV2) error {
+	if err := WriteSnapshotV2(projectRoot, snap); err != nil {
+		return err
+	}
+	return WriteEvidenceRecordsV2(projectRoot, snap.Evidence)
+}
+
+func redactCommands(projectRoot string, commands []ReportedCommand) []ReportedCommand {
+	cfg := security.LoadConfig(projectRoot)
+	out := make([]ReportedCommand, 0, len(commands))
+	for _, command := range commands {
+		command.Command, _ = security.RedactString(command.Command, cfg)
+		out = append(out, command)
+	}
+	return out
 }

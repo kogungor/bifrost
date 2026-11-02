@@ -52,12 +52,21 @@ type pendingCommand struct {
 	at      time.Time
 }
 
+// transcriptState follows tool calls across lines until their results arrive.
+type transcriptState struct {
+	root     string
+	commands map[string]pendingCommand // Bash tool_use ID → command
+	edits    map[string]string         // edit tool_use ID → project-relative path
+	edited   map[string]int            // path → order of its latest successful edit
+	order    int
+}
+
 var transcriptExitCodeRE = regexp.MustCompile(`^(?:Error: )?Exit code (\d+)`)
 
 // ReadClaudeTranscript extracts finished Bash commands and edited files from a
 // Claude Code transcript (JSON Lines). Commands run outside projectRoot,
-// interrupted or backgrounded commands, and tool calls that failed before
-// running are skipped. Unreadable lines are ignored, since the session may
+// interrupted or backgrounded commands, results whose exit code Claude Code
+// did not keep, and tool calls that were denied or failed are skipped. Unreadable lines are ignored, since the session may
 // still be appending to the file.
 func ReadClaudeTranscript(path, projectRoot string) (TranscriptActivity, error) {
 	var activity TranscriptActivity
@@ -71,14 +80,17 @@ func ReadClaudeTranscript(path, projectRoot string) (TranscriptActivity, error) 
 	if err != nil {
 		return activity, err
 	}
-	pending := map[string]pendingCommand{}
-	edited := map[string]int{}
-	order := 0
+	state := &transcriptState{
+		root:     root,
+		commands: map[string]pendingCommand{},
+		edits:    map[string]string{},
+		edited:   map[string]int{},
+	}
 	reader := bufio.NewReaderSize(f, 1<<20)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			readTranscriptLine(line, root, &activity, pending, edited, &order)
+			state.readLine(line, &activity)
 		}
 		if readErr == io.EOF {
 			break
@@ -92,16 +104,16 @@ func ReadClaudeTranscript(path, projectRoot string) (TranscriptActivity, error) 
 	if len(activity.Commands) > maxTranscriptCommands {
 		activity.Commands = activity.Commands[len(activity.Commands)-maxTranscriptCommands:]
 	}
-	for path := range edited {
+	for path := range state.edited {
 		activity.EditedFiles = append(activity.EditedFiles, path)
 	}
 	sort.Slice(activity.EditedFiles, func(i, j int) bool {
-		return edited[activity.EditedFiles[i]] < edited[activity.EditedFiles[j]]
+		return state.edited[activity.EditedFiles[i]] < state.edited[activity.EditedFiles[j]]
 	})
 	return activity, nil
 }
 
-func readTranscriptLine(line []byte, root string, activity *TranscriptActivity, pending map[string]pendingCommand, edited map[string]int, order *int) {
+func (state *transcriptState) readLine(line []byte, activity *TranscriptActivity) {
 	var entry transcriptEntry
 	if activity.SessionStart.IsZero() {
 		if json.Unmarshal(line, &entry) == nil && !entry.Timestamp.IsZero() {
@@ -112,7 +124,7 @@ func readTranscriptLine(line []byte, root string, activity *TranscriptActivity, 
 	if !bytes.Contains(line, []byte(`"tool_use`)) && !bytes.Contains(line, []byte(`"tool_result"`)) {
 		return
 	}
-	if json.Unmarshal(line, &entry) != nil || !insideRoot(entry.Cwd, root) {
+	if json.Unmarshal(line, &entry) != nil || !insideRoot(entry.Cwd, state.root) {
 		return
 	}
 	var message struct {
@@ -138,24 +150,31 @@ func readTranscriptLine(line []byte, root string, activity *TranscriptActivity, 
 			switch block.Name {
 			case "Bash":
 				if input.Command != "" && !input.RunInBackground {
-					pending[block.ID] = pendingCommand{command: input.Command, at: entry.Timestamp}
+					state.commands[block.ID] = pendingCommand{command: input.Command, at: entry.Timestamp}
 				}
 			case "Edit", "MultiEdit", "Write", "NotebookEdit":
 				target := input.FilePath
 				if target == "" {
 					target = input.NotebookPath
 				}
-				if rel, ok := relativeToRoot(target, root); ok {
-					*order++
-					edited[rel] = *order
+				if rel, ok := relativeToRoot(target, state.root); ok {
+					state.edits[block.ID] = rel
 				}
 			}
 		case "tool_result":
-			cmd, ok := pending[block.ToolUseID]
+			if path, ok := state.edits[block.ToolUseID]; ok {
+				delete(state.edits, block.ToolUseID)
+				if !block.IsError {
+					state.order++
+					state.edited[path] = state.order
+				}
+				continue
+			}
+			cmd, ok := state.commands[block.ToolUseID]
 			if !ok {
 				continue
 			}
-			delete(pending, block.ToolUseID)
+			delete(state.commands, block.ToolUseID)
 			exitCode, finished := transcriptExitCode(block, entry.ToolUseResult)
 			if !finished {
 				continue
@@ -168,7 +187,7 @@ func readTranscriptLine(line []byte, root string, activity *TranscriptActivity, 
 				Command:    cmd.command,
 				ExitCode:   exitCode,
 				CapturedAt: capturedAt.UTC(),
-				TestResult: strings.Contains(strings.ToLower(cmd.command), "test"),
+				TestResult: LooksLikeTestCommand(cmd.command),
 			})
 		}
 	}
@@ -200,8 +219,15 @@ func transcriptExitCode(block transcriptBlock, toolUseResult json.RawMessage) (i
 		var result struct {
 			Interrupted bool    `json:"interrupted"`
 			Stdout      *string `json:"stdout"`
+			// Set when Claude Code accepted a non-zero exit (e.g. grep with no
+			// match) or moved the command to the background; the real exit
+			// code is then unknown.
+			ReturnCodeInterpretation string `json:"returnCodeInterpretation"`
+			BackgroundTaskID         string `json:"backgroundTaskId"`
+			TimedOutAfterMs          int64  `json:"timedOutAfterMs"`
 		}
-		if json.Unmarshal(toolUseResult, &result) != nil || result.Stdout == nil || result.Interrupted {
+		if json.Unmarshal(toolUseResult, &result) != nil || result.Stdout == nil || result.Interrupted ||
+			result.ReturnCodeInterpretation != "" || result.BackgroundTaskID != "" || result.TimedOutAfterMs > 0 {
 			return 0, false
 		}
 		return 0, true

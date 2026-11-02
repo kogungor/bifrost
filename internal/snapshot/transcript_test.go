@@ -76,8 +76,17 @@ func TestReadClaudeTranscript(t *testing.T) {
 	b.add(map[string]any{"type": "user", "cwd": "/elsewhere", "toolUseResult": bashOK(), "message": map[string]any{"content": []any{
 		map[string]any{"type": "tool_result", "tool_use_id": "t6"}}}})
 	b.toolUse("e1", "Edit", map[string]any{"file_path": filepath.Join(root, "src", "auth.go")})
+	b.toolResult("e1", false, map[string]any{"filePath": filepath.Join(root, "src", "auth.go")})
 	b.toolUse("e2", "Write", map[string]any{"file_path": "/etc/hosts"})
+	b.toolResult("e2", false, map[string]any{})
 	b.toolUse("e3", "Write", map[string]any{"file_path": "relative.go"})
+	b.toolResult("e3", false, map[string]any{})
+	b.toolUse("e4", "Edit", map[string]any{"file_path": filepath.Join(root, "denied.go")})
+	b.toolResult("e4", true, "The user doesn't want to proceed with this tool use.")
+	b.toolUse("t7", "Bash", map[string]any{"command": "grep -r missing ."})
+	b.toolResult("t7", false, map[string]any{"stdout": "", "interrupted": false, "returnCodeInterpretation": "No matches found"})
+	b.toolUse("t8", "Bash", map[string]any{"command": "npm run build"})
+	b.toolResult("t8", false, map[string]any{"stdout": "", "interrupted": false, "backgroundTaskId": "b1", "timedOutAfterMs": 120000})
 	b.lines = append(b.lines, `{"type":"assistant","message":{"content":[{"type":"tool_use"`) // still being written
 
 	activity, err := ReadClaudeTranscript(b.write(t), root)
@@ -164,25 +173,76 @@ func TestCaptureSessionMergesIntoThisSessionsHandoff(t *testing.T) {
 	}
 }
 
-func TestCaptureSessionReplacesOlderSessionsSnapshot(t *testing.T) {
+func TestCaptureSessionKeepsAnEarlierHandoff(t *testing.T) {
+	// A handoff from another tool must survive a Claude session that only
+	// read it (/handin runs `bifrost brief`, which is a command).
 	root := t.TempDir()
-	old := &Snapshot{BifrostVersion: CurrentVersion, Timestamp: time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second),
+	old := &Snapshot{BifrostVersion: CurrentVersion, Timestamp: time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second),
 		SourceTool: "codex", Project: "app", CurrentTask: "Old task"}
 	if err := WriteSnapshotV2(root, SnapshotToV2(root, old)); err != nil {
 		t.Fatal(err)
 	}
-	activity := TranscriptActivity{SessionStart: time.Now().UTC().Add(-time.Hour), EditedFiles: []string{"main.go"}}
+	activity := TranscriptActivity{SessionStart: time.Now().UTC().Add(-time.Hour),
+		Commands: []ReportedCommand{{Command: "bifrost brief --mode implement", ExitCode: 0, CapturedAt: time.Now().UTC()}}}
 
 	result, err := CaptureSession(root, activity, CaptureOptions{SourceTool: "claude-code"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Created {
-		t.Fatal("a snapshot from an earlier session should be replaced by an automatic one")
+	if result.Written {
+		t.Fatalf("an earlier agent handoff must be left untouched: %+v", result)
 	}
-	snap, _ := ReadSnapshotV2(root)
-	if snap.Source.Tool != "claude-code" || snap.Session.Task == "Old task" {
-		t.Errorf("snapshot not replaced: %+v", snap.Session)
+	snap, _ := SnapshotFromProject(root)
+	if snap.Source.Tool != "codex" || snap.Session.Task != "Old task" || len(snap.Observed.Commands) != 0 {
+		t.Errorf("handoff changed: %+v %+v", snap.Session, snap.Observed.Commands)
+	}
+}
+
+func TestCaptureSessionReplacesAnEarlierAutomaticSnapshot(t *testing.T) {
+	root := t.TempDir()
+	first := TranscriptActivity{SessionStart: time.Now().UTC().Add(-48 * time.Hour), EditedFiles: []string{"old.go"}}
+	if _, err := CaptureSession(root, first, CaptureOptions{SourceTool: "claude-code", Now: time.Now().UTC().Add(-47 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	second := TranscriptActivity{SessionStart: time.Now().UTC().Add(-time.Hour), EditedFiles: []string{"new.go"}}
+	result, err := CaptureSession(root, second, CaptureOptions{SourceTool: "claude-code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Created {
+		t.Fatal("a hook-made snapshot from an earlier session should be replaced")
+	}
+	snap, _ := SnapshotFromProject(root)
+	if len(snap.ActiveFiles) != 1 || snap.ActiveFiles[0].Path != "new.go" || snap.Source.Agent != AutoCaptureAgent {
+		t.Errorf("snapshot not replaced: %+v", snap.ActiveFiles)
+	}
+}
+
+func TestCaptureSessionMergeKeepsDriftBaseline(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "auth.go")
+	os.WriteFile(path, []byte("package auth\n"), 0600)
+	handoff := SnapshotToV2(root, &Snapshot{BifrostVersion: CurrentVersion, Timestamp: time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second),
+		SourceTool: "claude-code", Project: "app", CurrentTask: "Auth", ActiveFiles: []ActiveFile{{Path: "auth.go", Note: "wip"}}})
+	if err := EnrichSnapshotV2(root, handoff); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSnapshotV2(root, handoff); err != nil {
+		t.Fatal(err)
+	}
+	// The file changes after the /handoff, then the session's capture runs.
+	time.Sleep(10 * time.Millisecond)
+	os.WriteFile(path, []byte("package auth\n\nfunc changed() {}\n"), 0600)
+	activity := TranscriptActivity{SessionStart: time.Now().UTC().Add(-time.Hour),
+		Commands: []ReportedCommand{{Command: "go vet ./...", ExitCode: 0, CapturedAt: time.Now().UTC()}}}
+	if _, err := CaptureSession(root, activity, CaptureOptions{SourceTool: "claude-code"}); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, _ := SnapshotFromProject(root)
+	result := VerifySnapshotV2(root, snap, VerifyOptions{})
+	if !hasVerifyCheck(result, "files.active_changed", VerifyWarn) {
+		t.Fatalf("a merge must not hide changes made after the handoff: %+v", result.Checks)
 	}
 }
 
@@ -236,5 +296,52 @@ func TestCaptureSessionReplacesEarlierTranscriptResults(t *testing.T) {
 	}
 	if transcriptEvidence != 1 {
 		t.Fatalf("transcript evidence = %d, want 1", transcriptEvidence)
+	}
+}
+
+func TestSnapshotFromProjectPrefersNewerMarkdownHandoff(t *testing.T) {
+	root := t.TempDir()
+	if _, err := CaptureSession(root, TranscriptActivity{EditedFiles: []string{"a.go"}},
+		CaptureOptions{SourceTool: "claude-code", Now: time.Now().UTC().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// An agent without MCP writes only session.md, after the hook's session.json.
+	md := &Snapshot{BifrostVersion: CurrentVersion, Timestamp: time.Now().UTC().Truncate(time.Second),
+		SourceTool: "opencode", Project: "app", CurrentTask: "Markdown handoff"}
+	if err := Write(root, md); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := SnapshotFromProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Session.Task != "Markdown handoff" {
+		t.Fatalf("newer session.md ignored; got task %q", snap.Session.Task)
+	}
+}
+
+func TestLooksLikeTestCommand(t *testing.T) {
+	for command, want := range map[string]bool{
+		"go test ./...":                         true,
+		"cd api && go test -run TestAuth ./...": true,
+		"CI=1 npm test":                         true,
+		"npm run test:unit":                     true,
+		"pnpm test":                             true,
+		"npx vitest run":                        true,
+		"python -m pytest -q":                   true,
+		"uv run pytest":                         true,
+		"cargo test --workspace":                true,
+		"make test-integration":                 true,
+		"bundle exec rspec":                     true,
+		"./gradlew test":                        true,
+		"cat auth_test.go":                      false,
+		"ls tests/":                             false,
+		"go build ./... && echo testing":        false,
+		"grep -r TestAuth .":                    false,
+		"go run ./cmd/test-server":              false,
+	} {
+		if got := LooksLikeTestCommand(command); got != want {
+			t.Errorf("LooksLikeTestCommand(%q) = %v, want %v", command, got, want)
+		}
 	}
 }

@@ -52,6 +52,9 @@ const (
 	hookSourceTool    = "claude-code"
 	compactNoteSource = "claude-code compaction summary"
 	maxNoteChars      = 50000
+	// Claude Code adds at most 10,000 characters of hook output to context;
+	// beyond that the model only sees a 2,000-character preview.
+	maxHookContextChars = 9500
 )
 
 func runHook(cmd *cobra.Command, args []string) error {
@@ -144,10 +147,7 @@ func hookSaveSummary(root string, in hookInput) {
 		}
 	}
 	if len(summary) > maxNoteChars {
-		summary = summary[:maxNoteChars]
-		for !utf8.ValidString(summary) {
-			summary = summary[:len(summary)-1]
-		}
+		summary = truncateUTF8(summary, maxNoteChars)
 	}
 	if err := snapshot.WriteNote(root, &snapshot.HandoffNote{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -182,7 +182,11 @@ func hookBriefing(root string, in hookInput) {
 	switch in.Source {
 	case "resume", "compact":
 		result := buildProjectBrief(root, snap, snapshot.BriefModeImplement, 5000, false)
-		fmt.Fprintf(os.Stdout, "Bifrost handoff for this project. Check the verification lines before relying on it.\n\n%s", result.Rendered)
+		text := "Bifrost handoff for this project. Check the verification lines before relying on it.\n\n" + result.Rendered
+		if len(text) > maxHookContextChars {
+			text = truncateUTF8(text, maxHookContextChars) + "\n... briefing truncated; run `bifrost brief --full` for the rest.\n"
+		}
+		fmt.Fprint(os.Stdout, text)
 	case "startup":
 		if time.Since(snap.CapturedAt) > 24*time.Hour {
 			return
@@ -190,6 +194,18 @@ func hookBriefing(root string, in hookInput) {
 		fmt.Fprintf(os.Stdout, "Bifrost: a handoff from %s (%s) is available for this project. Run /handin --verify to load it before continuing earlier work.\n",
 			snap.Source.Tool, formatAge(snap.CapturedAt))
 	}
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 func hookLog(format string, args ...any) {

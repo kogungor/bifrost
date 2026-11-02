@@ -384,10 +384,12 @@ This adds four hooks to `~/.claude/settings.json`, keeping everything else in th
 
 How captures are written:
 
-- If the agent wrote a snapshot during this session (for example with `/handoff`), its task, status, and decisions are kept and the transcript's commands and files are added to it.
-- Otherwise an automatic snapshot replaces the older one (which is archived). It holds only observed facts and says that no `/handoff` was written.
-- Commands are recorded as `collector.transcript` evidence, which counts as strong: the exit code comes from Claude Code, not from the model's summary. Only the latest run of each command is kept, interrupted and backgrounded commands are skipped, and command text is redacted like other Bifrost state.
+- A handoff the agent wrote during this session (for example with `/handoff`) keeps everything it recorded, including its file baseline, so changes made after it still show up in `bifrost verify`. Only the transcript's command results are added.
+- A handoff from an earlier session, such as one written in Codex or OpenCode, is never changed. Reading it in Claude Code with `/handin` and leaving does not replace it.
+- Otherwise (no snapshot yet, or one an earlier hook wrote) an automatic snapshot is written. It holds only observed facts, lists the files edited this session, and says that no `/handoff` was written. The previous snapshot is archived.
+- Commands are recorded as `collector.transcript` evidence, which counts as strong: the exit code comes from Claude Code, not from the model's summary. Only the latest run of each command is kept. Interrupted, backgrounded and timed-out commands, results whose exit code Claude Code reinterpreted (such as `grep` with no match), and denied tool calls are skipped. A command counts as a test run only when it starts a test runner (`go test`, `npm test`, `pytest`, ...), not when it merely mentions a test file. Command text is redacted like other Bifrost state.
 - Nothing is written when the session ran no commands and edited no files.
+- The `SessionStart` output stays under Claude Code's 10,000-character limit for hook context.
 
 Hooks do nothing in a project without `.bifrost/` or `BIFROST.md`, so installing them user-wide does not touch other repositories. They never fail the session: problems go to stderr and the exit code is always 0. `bifrost doctor` reports whether the hooks are registered.
 
