@@ -24,6 +24,9 @@ func TestOpenCodePaths(t *testing.T) {
 	if a.CommandsDir() != "/home/user/.config/opencode/commands" {
 		t.Errorf("unexpected commands dir: %s", a.CommandsDir())
 	}
+	if a.CommandPath("plan") != "/home/user/.config/opencode/commands/plan.md" {
+		t.Errorf("unexpected command path: %s", a.CommandPath("plan"))
+	}
 	wantMCP := "/home/user/.config/opencode/opencode.json"
 	if a.MCPConfigPath() != wantMCP {
 		t.Errorf("MCPConfigPath() = %s; want %s", a.MCPConfigPath(), wantMCP)
@@ -59,40 +62,50 @@ func TestOpenCodeDetection(t *testing.T) {
 
 func TestOpenCodeAddMCPServer(t *testing.T) {
 	a := &OpenCode{homeDir: "/home/user"}
-	config := map[string]any{"theme": "dark"}
-	if err := a.AddMCPServer(config); err != nil {
+	out, err := a.AddMCPServer([]byte(`{"theme": "dark"}`))
+	if err != nil {
 		t.Fatalf("AddMCPServer: %v", err)
 	}
-	if !a.HasMCPServer(config) {
-		t.Fatal("HasMCPServer after AddMCPServer")
+	if !a.HasMCPServer(out) {
+		t.Fatalf("HasMCPServer after AddMCPServer:\n%s", out)
+	}
+	config, err := parseJSONConfig(out)
+	if err != nil {
+		t.Fatal(err)
 	}
 	entry := config["mcp"].(map[string]any)["bifrost"].(map[string]any)
 	if entry["type"] != "local" || entry["enabled"] != true {
 		t.Errorf("unexpected entry: %v", entry)
 	}
-	command := entry["command"].([]string)
+	command := entry["command"].([]any)
 	if len(command) != 2 || command[0] != "bifrost" || command[1] != "mcp-serve" {
 		t.Errorf("unexpected command: %v", command)
 	}
 	if _, ok := config["mcpServers"]; ok {
 		t.Error("OpenCode config must not use the mcpServers key")
 	}
+	if config["theme"] != "dark" {
+		t.Error("existing key was not preserved")
+	}
 }
 
 func TestOpenCodeAddMCPServerNestedServers(t *testing.T) {
 	a := &OpenCode{homeDir: "/home/user"}
-	config := map[string]any{"mcp": map[string]any{"servers": map[string]any{}}}
-	if err := a.AddMCPServer(config); err != nil {
+	out, err := a.AddMCPServer([]byte(`{"mcp": {"servers": {}}}`))
+	if err != nil {
 		t.Fatalf("AddMCPServer: %v", err)
 	}
-	mcp := config["mcp"].(map[string]any)
-	if _, ok := mcp["bifrost"]; ok {
+	config, err := parseJSONConfig(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := config["mcp"].(map[string]any)["bifrost"]; ok {
 		t.Error("entry written beside servers instead of inside it")
 	}
 	if !hasChild(config, "mcp", "servers", "bifrost") {
 		t.Error("entry missing from mcp.servers")
 	}
-	if !a.HasMCPServer(config) {
+	if !a.HasMCPServer(out) {
 		t.Error("HasMCPServer should find nested entry")
 	}
 }

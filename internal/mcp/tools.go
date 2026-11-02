@@ -58,7 +58,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 				"properties": map[string]any{
 					"source_tool": map[string]any{
 						"type":        "string",
-						"description": "The AI tool writing the snapshot (e.g. claude-code, opencode)",
+						"description": "The AI tool writing the snapshot (e.g. claude-code, opencode, codex)",
 					},
 					"token_pressure": map[string]any{
 						"type":        "string",
@@ -226,7 +226,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 				"properties": map[string]any{
 					"source_tool": map[string]any{
 						"type":        "string",
-						"description": "The AI tool writing the plan (e.g. claude-code, opencode)",
+						"description": "The AI tool writing the plan (e.g. claude-code, opencode, codex)",
 					},
 					"title": map[string]any{
 						"type":        "string",

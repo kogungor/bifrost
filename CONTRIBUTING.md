@@ -23,7 +23,7 @@ go test ./...
 ```text
 cmd/bifrost/           Entry point; embeds slash command files
 internal/
-  adapters/            AI tool adapters (Claude Code, OpenCode)
+  adapters/            AI tool adapters (Claude Code, OpenCode, Codex)
   cli/                 Cobra commands and CLI integration surface
   mcp/                 Dependency-free stdio JSON-RPC MCP server
   project/             Project detection, gitignore, BIFROST.md analyzer/promotion
@@ -34,6 +34,7 @@ internal/
 cmd/bifrost/commands/
   claude-code/         /handoff, /handin, /plan, /review for Claude Code
   opencode/            /handoff, /handin, /plan, /review for OpenCode
+  codex/               $bifrost-handoff, ... as Agent Skills (SKILL.md) for Codex
 ```
 
 ## State Model
@@ -184,11 +185,21 @@ type Adapter interface {
 	Name() string            // "my-tool"
 	DisplayName() string     // "My Tool"
 	IsInstalled() bool       // detect installation
-	CommandsDir() string     // where slash commands go
+	CommandsDir() string     // where commands go (shown by install/doctor)
 	MCPConfigPath() string   // MCP config path (empty if N/A)
 	InstructionFile() string // "INSTRUCTIONS.md"
+
+	CommandPath(name string) string           // file for "handoff", "handin", ...
+	AddMCPServer(data []byte) ([]byte, error) // register `bifrost mcp-serve` in the tool's format
+	HasMCPServer(data []byte) bool
+	LegacyPaths() []string                    // old Bifrost install locations doctor should flag
 }
 ```
+
+Check paths and config formats against the tool itself, not only its docs:
+run `bifrost install --mcp` with an isolated `HOME` and confirm the tool's own
+CLI lists the server (`claude mcp list`, `opencode mcp list`, `codex mcp list`).
+Keep everything in the user's config that Bifrost does not own.
 
 2. Register it in `internal/adapters/registry.go` via `All()`.
 3. Add slash commands in:

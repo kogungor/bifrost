@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,7 @@ func runBifrost(t *testing.T, projectDir string, args ...string) (string, string
 	cmd.Env = append(os.Environ(),
 		"HOME="+projectDir, // isolate home directory
 		"XDG_CONFIG_HOME=", // keep OpenCode config under the isolated home
+		"CODEX_HOME=",      // keep Codex config under the isolated home
 		"NO_COLOR=1",
 	)
 	var stdout, stderr bytes.Buffer
@@ -98,19 +100,25 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 		name        string
 		adapter     string
 		detectDir   string
-		commandsDir string
+		commandFile string // relative path with %s for the command name
 	}{
 		{
 			name:        "claude code",
 			adapter:     "claude-code",
 			detectDir:   ".claude",
-			commandsDir: filepath.Join(".claude", "commands"),
+			commandFile: filepath.Join(".claude", "commands", "%s.md"),
 		},
 		{
 			name:        "opencode",
 			adapter:     "opencode",
 			detectDir:   ".opencode",
-			commandsDir: filepath.Join(".config", "opencode", "commands"),
+			commandFile: filepath.Join(".config", "opencode", "commands", "%s.md"),
+		},
+		{
+			name:        "codex",
+			adapter:     "codex",
+			detectDir:   ".codex",
+			commandFile: filepath.Join(".agents", "skills", "bifrost-%s", "SKILL.md"),
 		},
 	}
 
@@ -124,7 +132,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				t.Fatalf("install failed (exit %d): %s", code, out)
 			}
 
-			data, err := os.ReadFile(filepath.Join(home, tt.commandsDir, "handin.md"))
+			data, err := os.ReadFile(filepath.Join(home, fmt.Sprintf(tt.commandFile, "handin")))
 			if err != nil {
 				t.Fatalf("read installed handin.md: %v", err)
 			}
@@ -151,7 +159,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 				}
 			}
 
-			data, err = os.ReadFile(filepath.Join(home, tt.commandsDir, "plan.md"))
+			data, err = os.ReadFile(filepath.Join(home, fmt.Sprintf(tt.commandFile, "plan")))
 			if err != nil {
 				t.Fatalf("read installed plan.md: %v", err)
 			}
@@ -2003,5 +2011,56 @@ func TestPlanVerifyRequiresConfirmation(t *testing.T) {
 	}
 	if read.Steps[0].Status != "claimed_done" {
 		t.Fatalf("step status changed without running: %q", read.Steps[0].Status)
+	}
+}
+
+func TestInstallCodexSkillsAndMCP(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	os.MkdirAll(codexDir, 0755)
+	existing := "# keep this comment\nmodel = \"gpt-5\"\n"
+	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0600)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "codex", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), existing) {
+		t.Errorf("existing config.toml content was not preserved:\n%s", data)
+	}
+	if !strings.Contains(string(data), "[mcp_servers.bifrost]") || !strings.Contains(string(data), `args = ["mcp-serve"]`) {
+		t.Errorf("config.toml missing bifrost server:\n%s", data)
+	}
+
+	for _, name := range []string{"handoff", "handin", "plan", "review"} {
+		skill, err := os.ReadFile(filepath.Join(home, ".agents", "skills", "bifrost-"+name, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("skill %s not installed: %v", name, err)
+		}
+		if !strings.HasPrefix(string(skill), "---\nname: bifrost-"+name+"\ndescription: ") {
+			t.Errorf("skill %s has no Agent Skills frontmatter:\n%.200s", name, skill)
+		}
+		if strings.Contains(string(skill), "$ARGUMENTS") {
+			t.Errorf("skill %s still uses $ARGUMENTS, which Codex skills do not substitute", name)
+		}
+	}
+
+	// A second install must not append a duplicate table.
+	if _, _, code := runBifrost(t, home, "install", "--adapter", "codex", "--mcp", "--force"); code != 0 {
+		t.Fatalf("second install failed (exit %d)", code)
+	}
+	data, _ = os.ReadFile(filepath.Join(codexDir, "config.toml"))
+	if n := strings.Count(string(data), "[mcp_servers.bifrost]"); n != 1 {
+		t.Errorf("expected one bifrost table after reinstall, got %d:\n%s", n, data)
+	}
+
+	out, _, _ = runBifrost(t, home, "doctor", "--project", home)
+	if !strings.Contains(out, "Codex") || strings.Contains(out, "Codex                MCP server not registered") {
+		t.Errorf("doctor should report Codex MCP registered:\n%s", out)
 	}
 }

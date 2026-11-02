@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,8 +50,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		}
 
 		cmdsDir := a.CommandsDir()
-		handoff := filepath.Join(cmdsDir, "handoff.md")
-		handin := filepath.Join(cmdsDir, "handin.md")
+		handoff := a.CommandPath("handoff")
+		handin := a.CommandPath("handin")
 
 		handoffOK := fileExists(handoff)
 		handinOK := fileExists(handin)
@@ -247,11 +248,11 @@ func fileExists(path string) bool {
 
 // isMCPConfigured returns true if the adapter's config file registers the bifrost MCP server.
 func isMCPConfigured(a adapters.Adapter, mcpPath string) bool {
-	config, err := readJSONConfig(mcpPath)
+	data, err := readConfigFile(mcpPath)
 	if err != nil {
 		return false
 	}
-	return a.HasMCPServer(config)
+	return a.HasMCPServer(data)
 }
 
 // hasLegacyBifrostFiles reports whether path holds slash commands or an
@@ -264,11 +265,16 @@ func hasLegacyBifrostFiles(path string) bool {
 	if info.IsDir() {
 		return fileExists(filepath.Join(path, "handoff.md")) || fileExists(filepath.Join(path, "handin.md"))
 	}
-	config, err := readJSONConfig(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	servers, _ := config["mcpServers"].(map[string]any)
-	_, found := servers["bifrost"]
+	var config struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false
+	}
+	_, found := config.MCPServers["bifrost"]
 	return found
 }
