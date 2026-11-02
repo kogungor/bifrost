@@ -24,10 +24,42 @@ const (
 
 // ToolDefinition describes a tool for tools/list.
 type ToolDefinition struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	InputSchema any    `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description"`
+	InputSchema any              `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 }
+
+// ToolAnnotations are MCP behavior hints clients use to decide when to ask the
+// user before a call. The hints default to destructive and open-world when
+// absent, so every field is always sent.
+type ToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    bool   `json:"readOnlyHint"`
+	DestructiveHint bool   `json:"destructiveHint"`
+	IdempotentHint  bool   `json:"idempotentHint"`
+	OpenWorldHint   bool   `json:"openWorldHint"`
+}
+
+// toolAnnotations describe what each tool does to local Bifrost state. Writes
+// that replace existing content (a plan or note of the same name, plan step
+// edits) are destructive; write_snapshot archives the previous snapshot first.
+var toolAnnotations = map[string]ToolAnnotations{
+	"bifrost_read_snapshot":  {Title: "Read handoff snapshot", ReadOnlyHint: true, IdempotentHint: true},
+	"bifrost_write_snapshot": {Title: "Write handoff snapshot"},
+	"bifrost_write_note":     {Title: "Write handoff note", DestructiveHint: true},
+	"bifrost_status":         {Title: "Bifrost status", ReadOnlyHint: true, IdempotentHint: true},
+	"bifrost_read_plan":      {Title: "Read plan", ReadOnlyHint: true, IdempotentHint: true},
+	"bifrost_write_plan":     {Title: "Create plan", DestructiveHint: true},
+	"bifrost_update_plan":    {Title: "Update plan", DestructiveHint: true},
+	"bifrost_delete_plan":    {Title: "Delete plan", DestructiveHint: true, IdempotentHint: true},
+	"bifrost_list_plans":     {Title: "List plans", ReadOnlyHint: true, IdempotentHint: true},
+}
+
+// errUnknownTool is reported to the client as a protocol error rather than a
+// tool execution error.
+var errUnknownTool = errors.New("unknown tool")
 
 // ToolSet holds the tool handlers for a project.
 type ToolSet struct {
@@ -39,9 +71,9 @@ func NewToolSet(projectRoot string) *ToolSet {
 	return &ToolSet{projectRoot: projectRoot}
 }
 
-// Definitions returns the 4 tool definitions with JSON schemas.
+// Definitions returns the tool definitions with JSON schemas and annotations.
 func (ts *ToolSet) Definitions() []ToolDefinition {
-	return []ToolDefinition{
+	defs := []ToolDefinition{
 		{
 			Name:        "bifrost_read_snapshot",
 			Description: "Read the current Bifrost session snapshot. Returns legacy Markdown fields plus v2 JSON integrity state when available: observed facts, evidence, trust signals, command summaries, active plan, risks, questions, and handoff note.",
@@ -348,6 +380,12 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 			},
 		},
 	}
+	for i := range defs {
+		annotations := toolAnnotations[defs[i].Name]
+		defs[i].Title = annotations.Title
+		defs[i].Annotations = &annotations
+	}
+	return defs
 }
 
 // Call dispatches a tool call by name.
@@ -372,7 +410,7 @@ func (ts *ToolSet) Call(name string, args json.RawMessage) (any, error) {
 	case "bifrost_list_plans":
 		return ts.listPlans()
 	default:
-		return nil, fmt.Errorf("unknown tool: %s", name)
+		return nil, fmt.Errorf("%w: %s", errUnknownTool, name)
 	}
 }
 

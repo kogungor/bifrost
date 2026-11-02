@@ -256,8 +256,8 @@ func TestWriteSnapshotWithEvidenceFields(t *testing.T) {
 	if len(resps) != 1 {
 		t.Fatalf("expected 1 response, got %d", len(resps))
 	}
-	if resps[0]["error"] != nil {
-		t.Fatalf("write snapshot failed: %+v", resps[0]["error"])
+	if isFailure(resps[0]) {
+		t.Fatalf("write snapshot failed: %+v", resps[0])
 	}
 
 	readResps := runServer(t, dir,
@@ -338,7 +338,7 @@ func TestUnknownMethod(t *testing.T) {
 		t.Fatalf("expected 1 response, got %d", len(resps))
 	}
 
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatalf("expected error response: %v", resps[0])
 	}
@@ -369,7 +369,7 @@ func TestInvalidParams(t *testing.T) {
 		t.Fatalf("expected 1 response, got %d", len(resps))
 	}
 
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatalf("expected error response: %v", resps[0])
 	}
@@ -427,7 +427,7 @@ func TestWriteSnapshotPathTraversal(t *testing.T) {
 	if len(resps) != 1 {
 		t.Fatalf("expected 1 response, got %d", len(resps))
 	}
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for path traversal")
 	}
@@ -452,7 +452,7 @@ func TestWriteSnapshotAbsolutePath(t *testing.T) {
 		}),
 	)
 
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for absolute path")
 	}
@@ -475,7 +475,7 @@ func TestWriteSnapshotFieldTooLong(t *testing.T) {
 		}),
 	)
 
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for oversized field")
 	}
@@ -498,7 +498,7 @@ func TestWriteNoteTooLong(t *testing.T) {
 		}),
 	)
 
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for oversized note")
 	}
@@ -800,7 +800,7 @@ func TestPlanDeleteNotFound(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for deleting nonexistent plan")
 	}
@@ -822,7 +822,7 @@ func TestPlanNameTraversal(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for path traversal plan name")
 	}
@@ -858,7 +858,7 @@ func TestPlanUpdateInvalidStepIndex(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for out-of-range step index")
 	}
@@ -892,7 +892,7 @@ func TestPlanUpdateInvalidStepStatus(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for invalid step status")
 	}
@@ -923,7 +923,7 @@ func TestPlanUpdateInvalidPlanStatus(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for invalid plan status")
 	}
@@ -1015,7 +1015,7 @@ func TestPlanWriteFilePathTraversal(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for path traversal in step files")
 	}
@@ -1048,7 +1048,7 @@ func TestPlanUpdateEmptyReviewNote(t *testing.T) {
 			},
 		}),
 	)
-	errObj, ok := resps[0]["error"].(map[string]any)
+	errObj, ok := toolErrorObject(resps[0])
 	if !ok {
 		t.Fatal("expected error for empty review note fields")
 	}
@@ -1221,7 +1221,7 @@ func TestInvalidSessionIntentRejected(t *testing.T) {
 	)
 
 	resp := resps[0]
-	if resp["error"] == nil {
+	if !isFailure(resp) {
 		t.Error("expected error for invalid session_intent, got none")
 	}
 }
@@ -1335,7 +1335,7 @@ func TestInvalidConfidenceRejected(t *testing.T) {
 	)
 
 	resp := resps[0]
-	if resp["error"] == nil {
+	if !isFailure(resp) {
 		t.Error("expected error for invalid confidence value, got none")
 	}
 }
@@ -1356,8 +1356,8 @@ func TestActiveFilePathAllowsDotsInsideSegment(t *testing.T) {
 		}),
 	)
 
-	if resps[0]["error"] != nil {
-		t.Fatalf("path with dots inside a segment should be accepted: %+v", resps[0]["error"])
+	if isFailure(resps[0]) {
+		t.Fatalf("path with dots inside a segment should be accepted: %+v", resps[0])
 	}
 }
 
@@ -1377,7 +1377,7 @@ func TestInvalidActiveFilePathRejected(t *testing.T) {
 		}),
 	)
 
-	if resps[0]["error"] == nil {
+	if !isFailure(resps[0]) {
 		t.Error("expected error for traversal active file path")
 	}
 }
@@ -1635,7 +1635,7 @@ func TestInvalidReviewOutcomeRejected(t *testing.T) {
 		}),
 	)
 
-	if resps[1]["error"] == nil {
+	if !isFailure(resps[1]) {
 		t.Error("expected error for invalid review_outcome, got none")
 	}
 }
@@ -1775,11 +1775,42 @@ func TestWriteSnapshotRejectsCollectorEvidenceSource(t *testing.T) {
 				},
 			}),
 		)
-		if len(resps) != 1 || resps[0]["error"] == nil {
+		if len(resps) != 1 || !isFailure(resps[0]) {
 			t.Fatalf("%s: expected caller-supplied collector source to be rejected, got %+v", field, resps)
 		}
-		if msg := resps[0]["error"].(map[string]any)["message"].(string); !strings.Contains(msg, "reserved") {
+		if msg := toolErrorMessage(resps[0]); !strings.Contains(msg, "reserved") {
 			t.Fatalf("%s: unexpected error: %s", field, msg)
 		}
 	}
+}
+
+// toolErrorObject returns the error of a failed call: the JSON-RPC error
+// object, or for a tool execution error (an isError result) an object whose
+// "message" is the result text.
+func toolErrorObject(resp map[string]any) (map[string]any, bool) {
+	if errObj, ok := resp["error"].(map[string]any); ok {
+		return errObj, true
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok || result["isError"] != true {
+		return nil, false
+	}
+	text := ""
+	if content, ok := result["content"].([]any); ok && len(content) > 0 {
+		if item, ok := content[0].(map[string]any); ok {
+			text, _ = item["text"].(string)
+		}
+	}
+	return map[string]any{"message": text}, true
+}
+
+func toolErrorMessage(resp map[string]any) string {
+	errObj, _ := toolErrorObject(resp)
+	msg, _ := errObj["message"].(string)
+	return msg
+}
+
+func isFailure(resp map[string]any) bool {
+	_, failed := toolErrorObject(resp)
+	return failed
 }
