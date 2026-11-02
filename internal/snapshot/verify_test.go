@@ -151,6 +151,46 @@ func TestVerifySnapshotV2AcceptsPassingCommandResultForTestCommand(t *testing.T)
 	}
 }
 
+func TestVerifySnapshotV2WarnsWhenTestEvidenceIsOnlyReported(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	cmd, ev := NewCommandEvidence(ReportedCommand{Command: "go test ./...", ExitCode: 0, TestResult: true}, snap.CapturedAt)
+	snap.Observed.Commands = []CommandObservedV2{cmd}
+	snap.Evidence = []EvidenceV2{ev}
+	snap.Interpretation.StatusItems = []StatusItemV2{{
+		ID:           "status_tests",
+		Text:         "Tests pass",
+		State:        "claimed_done",
+		EvidenceRefs: []string{ev.ID},
+	}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	if !hasVerifyCheck(result, "commands.test_evidence_source", VerifyWarn) {
+		t.Fatalf("expected warning for agent-reported test evidence: %+v", result.Checks)
+	}
+}
+
+func TestVerifySnapshotV2TrustsCollectedTestEvidence(t *testing.T) {
+	root := t.TempDir()
+	snap := verifyBaseSnapshot()
+	cmd, ev := NewCollectedCommandEvidence(ReportedCommand{Command: "go test ./...", ExitCode: 0, TestResult: true}, snap.CapturedAt)
+	snap.Observed.Commands = []CommandObservedV2{cmd}
+	snap.Evidence = []EvidenceV2{ev}
+	snap.Interpretation.StatusItems = []StatusItemV2{{
+		ID:           "status_tests",
+		Text:         "Tests pass",
+		State:        "claimed_done",
+		EvidenceRefs: []string{ev.ID},
+	}}
+
+	result := VerifySnapshotV2(root, snap, VerifyOptions{Now: snap.CapturedAt.Add(time.Minute)})
+	for _, check := range result.Checks {
+		if check.ID == "commands.test_evidence_source" || (check.ID == "commands.test_claims" && check.Status != VerifyPass) {
+			t.Fatalf("collected test evidence should verify cleanly: %+v", result.Checks)
+		}
+	}
+}
+
 func TestVerifySnapshotV2DetectsHighQuestionsAndRisks(t *testing.T) {
 	root := t.TempDir()
 	snap := verifyBaseSnapshot()

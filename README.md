@@ -124,7 +124,7 @@ The new session does not have to guess whether the previous summary was true. It
 | Session intent | `implementing` — plan, implement, debug, or review                       |
 | Observed facts | branch, commit, dirty files, active file metadata, project commands       |
 | Trust model    | `src/auth.ts` — implementation: medium, tests: low, freshness: current    |
-| Evidence       | `npm test` claim backed by a recorded `command_result` or left unverified |
+| Evidence       | `npm test` claim backed by a `command_result` Bifrost ran, one the agent reported, or left unverified |
 | Assumptions    | "Redis is available on localhost:6379" — unverified                      |
 | Open questions | "Should refresh tokens be single-use or reusable across devices?"        |
 | Risks          | "Token revocation list not yet implemented"                              |
@@ -180,6 +180,22 @@ bifrost install --mcp
 ```
 
 Without `--mcp`, `/handin` falls back to reading `.bifrost/session.md` directly — it still works, but MCP gives it structured access to all fields.
+
+`--mcp` writes each tool's own global config:
+
+| Tool        | Slash commands                 | MCP server                                         |
+| ----------- | ------------------------------ | -------------------------------------------------- |
+| Claude Code | `~/.claude/commands/`          | `~/.claude.json` → `mcpServers.bifrost` (user scope) |
+| OpenCode    | `~/.config/opencode/commands/` | `~/.config/opencode/opencode.json` → `mcp.bifrost`  |
+
+OpenCode paths follow `$XDG_CONFIG_HOME` when it is set. Other keys in these files are preserved. Recent versions of both tools can register the same server with their own CLIs:
+
+```bash
+claude mcp add --scope user bifrost -- bifrost mcp-serve
+opencode mcp add --global bifrost -- bifrost mcp-serve
+```
+
+**Upgrading from 1.3.x or earlier:** older versions wrote MCP config to `~/.claude/mcp.json` and `~/.opencode/opencode.json` under an `mcpServers` key. Neither tool reads those entries, so MCP was never active. Run `bifrost install --mcp --force` to register again. `bifrost doctor` then lists the old files so you can remove them.
 
 To install for a specific tool only:
 
@@ -469,6 +485,8 @@ bifrost verify --json
 
 `bifrost verify` checks snapshot age, branch and commit drift, active file existence and metadata, evidence-backed claims, unresolved high severity risks/questions, active plan state, and secret-like values in local Bifrost state. It never runs destructive commands.
 
+Evidence records where it came from. Facts Bifrost observed itself (git state, file metadata, commands run by `bifrost plan verify`) use `collector.*` sources and count as strong evidence. Command results the previous agent reported (`reported.command`) count as medium: they are detailed claims, not observations. When a test-pass claim rests only on reported results, `bifrost verify` warns and recommends re-running the tests. MCP callers cannot use `collector.*` sources.
+
 ### JSON State, Validation, And Migration
 
 Legacy Markdown snapshots remain readable. Canonical JSON state enables validation and machine-readable workflows:
@@ -674,7 +692,7 @@ Register it:
 bifrost install --mcp
 ```
 
-This writes config to each adapter's MCP config path (e.g. `~/.claude/mcp.json`). The server runs as a subprocess — no network sockets, no background daemon.
+This writes config to each adapter's MCP config path (`~/.claude.json` for Claude Code, `~/.config/opencode/opencode.json` for OpenCode). The server runs as a subprocess — no network sockets, no background daemon.
 
 ### Snapshot Tools
 

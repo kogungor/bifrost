@@ -195,12 +195,17 @@ func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
 	evidence := evidenceIDSet(snap.Evidence)
 	unevidenced := []string{}
 	unverifiedTests := []string{}
+	reportedOnlyTests := []string{}
 	for _, item := range snap.Interpretation.StatusItems {
 		if len(item.EvidenceRefs) == 0 || !allRefsExist(item.EvidenceRefs, evidence) {
 			unevidenced = append(unevidenced, item.Text)
 		}
-		if looksLikeTestClaim(item.Text) && !hasTestEvidence(snap.Evidence) {
-			unverifiedTests = append(unverifiedTests, item.Text)
+		if looksLikeTestClaim(item.Text) {
+			if !hasTestEvidence(snap.Evidence) {
+				unverifiedTests = append(unverifiedTests, item.Text)
+			} else if !hasCollectedTestEvidence(snap.Evidence) {
+				reportedOnlyTests = append(reportedOnlyTests, item.Text)
+			}
 		}
 	}
 	if len(unevidenced) > 0 {
@@ -212,6 +217,9 @@ func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
 		r.add(VerifyFail, "commands.test_claims", "Test-pass claim has no test_result or passing command_result evidence.", "Run or inspect tests before assuming they pass.")
 	} else {
 		r.add(VerifyPass, "commands.test_claims", "No unevidenced test-pass claims detected.", "")
+	}
+	if len(reportedOnlyTests) > 0 {
+		r.add(VerifyWarn, "commands.test_evidence_source", "Test-pass evidence was reported by the previous agent, not observed by Bifrost.", "Re-run the tests, or `bifrost plan verify`, before trusting the claim.")
 	}
 }
 
@@ -357,7 +365,19 @@ func looksLikeTestClaim(text string) bool {
 }
 
 func hasTestEvidence(evidence []EvidenceV2) bool {
+	return hasPassingTestEvidence(evidence, false)
+}
+
+// hasCollectedTestEvidence is hasTestEvidence limited to commands Bifrost ran itself.
+func hasCollectedTestEvidence(evidence []EvidenceV2) bool {
+	return hasPassingTestEvidence(evidence, true)
+}
+
+func hasPassingTestEvidence(evidence []EvidenceV2, collectedOnly bool) bool {
 	for _, ev := range evidence {
+		if collectedOnly && !IsCollectedEvidence(ev) {
+			continue
+		}
 		if ev.Type == EvidenceTypeTestResult && commandEvidencePassed(ev) {
 			return true
 		}

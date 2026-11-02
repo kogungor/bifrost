@@ -20,6 +20,14 @@
 - **`/handin` briefing model** — incoming agents now get explicit "Trust this", "Verify this first", and "Do not assume this" guidance when v2 state is available.
 - **MCP snapshot tools** — snapshot read/write tools remain backward-compatible with legacy confidence fields while supporting v2 JSON, evidence, command results, and manual evidence.
 - **Documentation and help text** — README, design docs, CLI help, and release metadata now describe Bifrost as a local context integrity layer, not only a session bridge.
+- **Evidence trust follows its source** — command and test results Bifrost ran itself (`bifrost plan verify`) are recorded as `collector.command` and count as strong evidence. Results the previous agent reported stay `reported.command` and now count as medium. `bifrost verify` warns when a test-pass claim rests only on reported results. MCP callers can no longer supply `collector.*` sources.
+
+### Fixed
+
+- **Claude Code MCP registration** — `bifrost install --mcp` wrote to `~/.claude/mcp.json`, which Claude Code does not read. It now writes a user-scope entry to `~/.claude.json`, preserving the rest of the file. `bifrost doctor` checks the same file, so it no longer reports a server that Claude Code never loads.
+- **OpenCode paths and MCP schema** — slash commands now install to `~/.config/opencode/commands/`, and MCP registration writes `mcp.bifrost` (`type: local`, command array) to `~/.config/opencode/opencode.json`. The old `mcpServers` key was ignored by OpenCode. Both paths honor `$XDG_CONFIG_HOME`.
+- **Legacy install files** — `bifrost doctor` lists Bifrost files left in the old locations so they can be removed. Run `bifrost install --mcp --force` after upgrading.
+- **License** — added the MIT `LICENSE` file the README already referred to.
 
 ## [0.9.0] — 2026-03-28
 

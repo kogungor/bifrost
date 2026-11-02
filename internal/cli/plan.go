@@ -154,7 +154,7 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 			if result.exitCode != 0 {
 				failed++
 			}
-			_, ev := snapshot.NewCommandEvidence(snapshot.ReportedCommand{
+			_, ev := snapshot.NewCollectedCommandEvidence(snapshot.ReportedCommand{
 				Command:    command,
 				ExitCode:   result.exitCode,
 				CapturedAt: now,
