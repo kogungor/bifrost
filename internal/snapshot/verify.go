@@ -220,7 +220,7 @@ func (r *VerifyResult) addEvidenceChecks(snap *SnapshotV2) {
 	if len(unverifiedTests) > 0 {
 		r.add(VerifyFail, "commands.test_claims", "Test-pass claim has no test_result or passing command_result evidence.", "Run or inspect tests before assuming they pass.")
 	} else {
-		r.add(VerifyPass, "commands.test_claims", "No unevidenced test-pass claims detected.", "")
+		r.add(VerifyPass, "commands.test_claims", "Test-pass claims have command evidence.", "")
 	}
 	if len(reportedOnlyTests) > 0 {
 		r.add(VerifyWarn, "commands.test_evidence_source", "Test-pass evidence was reported by the previous agent, not observed by Bifrost.", "Re-run the tests, or `bifrost plan verify`, before trusting the claim.")

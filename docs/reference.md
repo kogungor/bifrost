@@ -271,6 +271,8 @@ bifrost brief --mode review --full
 bifrost brief --json
 ```
 
+`--budget` is the maximum briefing size in characters (default 5000, roughly 1,200 tokens). Beyond it, lower-priority sections are dropped and listed as omitted; verification warnings and high-severity risks are always kept. `--full` disables the budget.
+
 ### Creating Plans
 
 In any AI coding tool, type:
@@ -568,6 +570,8 @@ bifrost diff
 ## MCP Server
 
 Bifrost can run as an [MCP](https://modelcontextprotocol.io/) server, exposing snapshot and plan operations as formal tool calls over stdio JSON-RPC. AI tools that support MCP can call these tools directly — no slash commands needed.
+
+The server speaks MCP 2026-07-28 (stateless requests with per-request `_meta`, `server/discover`) and the earlier 2024-11-05 through 2025-11-25 revisions through `initialize`, so both current and older clients connect. Every tool carries annotations: read tools are marked read-only, and tools that replace existing content (`bifrost_write_note`, `bifrost_write_plan`, `bifrost_update_plan`, `bifrost_delete_plan`) are marked destructive so clients can ask before calling them. Validation failures come back as tool results with `isError: true`, which the model can read and correct.
 
 Register it:
 
