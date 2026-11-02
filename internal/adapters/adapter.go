@@ -29,6 +29,18 @@ type Adapter interface {
 	LegacyPaths() []string
 }
 
+// HookInstaller is implemented by adapters whose tool can run Bifrost on
+// session lifecycle events (Claude Code hooks).
+type HookInstaller interface {
+	// HooksConfigPath is the settings file that holds the tool's hooks.
+	HooksConfigPath() string
+	// AddHooks returns the settings contents (nil when the file does not
+	// exist yet) with Bifrost's hooks registered and everything else kept.
+	AddHooks(data []byte) ([]byte, error)
+	// HasHooks reports whether every Bifrost hook is registered.
+	HasHooks(data []byte) bool
+}
+
 // markdownCommandPath is the flat <dir>/<name>.md layout used by slash commands.
 func markdownCommandPath(dir, name string) string {
 	return filepath.Join(dir, name+".md")

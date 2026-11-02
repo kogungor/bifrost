@@ -98,6 +98,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Hooks are opt-in, so a missing registration is only a hint.
+		if h, ok := a.(adapters.HookInstaller); ok {
+			data, err := readConfigFile(h.HooksConfigPath())
+			if err == nil && h.HasHooks(data) {
+				ui.Success(fmt.Sprintf("%-20s hooks registered", a.DisplayName()))
+			} else {
+				ui.Dim(fmt.Sprintf("  %-18s hooks not registered (optional: 'bifrost install --hooks' for automatic handoff)", a.DisplayName()))
+			}
+		}
+
 		for _, legacy := range a.LegacyPaths() {
 			if hasLegacyBifrostFiles(legacy) {
 				ui.Warning(fmt.Sprintf("%-20s old Bifrost files at %s", a.DisplayName(), legacy))

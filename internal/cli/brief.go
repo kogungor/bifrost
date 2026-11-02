@@ -48,6 +48,18 @@ func runBrief(cmd *cobra.Command, args []string) error {
 		ui.Error("Could not read snapshot.", err.Error())
 		return err
 	}
+	result := buildProjectBrief(root, snap, briefMode, briefBudget, briefFull)
+	if briefJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+	fmt.Fprint(os.Stdout, result.Rendered)
+	return nil
+}
+
+// buildProjectBrief verifies snap against the project and renders a briefing.
+func buildProjectBrief(root string, snap *snapshot.SnapshotV2, mode string, budget int, full bool) snapshot.BriefResult {
 	verify := snapshot.VerifySnapshotV2(root, snap, snapshot.VerifyOptions{
 		LoadActivePlan: func(name string) (string, error) {
 			return snapshot.LoadPlanStatus(root, name)
@@ -60,20 +72,13 @@ func runBrief(cmd *cobra.Command, args []string) error {
 			planSummary = &summary
 		}
 	}
-	result := snapshot.BuildBrief(snap, snapshot.BriefOptions{
-		Mode:        briefMode,
-		BudgetChars: briefBudget,
-		Full:        briefFull,
+	return snapshot.BuildBrief(snap, snapshot.BriefOptions{
+		Mode:        mode,
+		BudgetChars: budget,
+		Full:        full,
 		Verify:      &verify,
 		PlanSummary: planSummary,
 	})
-	if briefJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
-	}
-	fmt.Fprint(os.Stdout, result.Rendered)
-	return nil
 }
 
 func validBriefMode(mode string) bool {

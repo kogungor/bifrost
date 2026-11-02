@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Automatic handoff for Claude Code** — `bifrost install --hooks` registers `PreCompact`, `PostCompact`, `SessionStart`, and `SessionEnd` hooks. Before compaction and at session end, Bifrost records the Bash commands that ran (with the exit codes from Claude Code's transcript) and the files edited; the compaction summary becomes the handoff note; resumed and compacted sessions start with the briefing. Without a `/handoff` in the session, an automatic snapshot holds the observed facts. Hooks act only in projects that use Bifrost.
+- **Harness evidence** — command results read from the transcript are recorded as `collector.transcript` and count as strong evidence.
 - **MCP 2026-07-28** — the server answers stateless requests that carry their version in `_meta`, including `server/discover`, and still negotiates 2024-11-05 through 2025-11-25 through `initialize`. Claude Code now connects over 2026-07-28; OpenCode and Codex keep using `initialize`.
 - **Tool annotations** — every MCP tool has a title and read-only/destructive/idempotent hints; tools that replace existing content are marked destructive.
 - **Secret detectors** — Stripe keys, Slack tokens and webhook URLs, and Google API keys are detected and redacted.
@@ -15,6 +17,7 @@
 
 ### Fixed
 
+- **Handoff notes were written unredacted** — `.bifrost/handoff.md` (from `bifrost_write_note` or the compaction summary) now goes through the same secret redaction as snapshots.
 - **MCP message size** — a message over 16 MB no longer stops the server; it is answered with an error and skipped. Parse errors use `-32700` with `"id": null`.
 - **`--budget` documentation** — the docs and `/handin` instructions now say the budget is in characters.
 
