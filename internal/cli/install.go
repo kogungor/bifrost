@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -127,29 +128,14 @@ func installAdapterCommands(a adapters.Adapter) error {
 }
 
 func installMCPConfig(a adapters.Adapter, mcpPath string) error {
-	// Read existing config if present
-	config := make(map[string]any)
-	data, err := os.ReadFile(mcpPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("parse existing %s: %w", mcpPath, err)
-		}
+	config, err := readJSONConfig(mcpPath)
+	if err != nil {
+		return err
 	}
 
-	// Ensure mcpServers key exists and is a valid map
-	servers, ok := config["mcpServers"].(map[string]any)
-	if !ok {
-		if config["mcpServers"] != nil {
-			return fmt.Errorf("mcpServers in %s is not a JSON object", mcpPath)
-		}
-		servers = make(map[string]any)
-		config["mcpServers"] = servers
-	}
-
-	// Add bifrost entry
-	servers["bifrost"] = map[string]any{
-		"command": "bifrost",
-		"args":    []string{"mcp-serve"},
+	// The adapter knows the tool's schema (Claude Code "mcpServers", OpenCode "mcp")
+	if err := a.AddMCPServer(config); err != nil {
+		return fmt.Errorf("%s: %w", mcpPath, err)
 	}
 
 	if installDryRun {
@@ -157,20 +143,70 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 		return nil
 	}
 
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(mcpPath), 0700); err != nil {
-		return err
-	}
-
-	out, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(mcpPath, append(out, '\n'), 0600); err != nil {
+	if err := writeJSONConfig(mcpPath, config); err != nil {
 		return err
 	}
 
 	ui.Success(fmt.Sprintf("%s  MCP server registered  (%s)", a.DisplayName(), mcpPath))
+	return nil
+}
+
+// readJSONConfig parses a tool's JSON config, returning an empty object when
+// the file does not exist. Numbers stay json.Number so values Bifrost does not
+// own (e.g. large IDs in ~/.claude.json) survive a rewrite unchanged.
+func readJSONConfig(path string) (map[string]any, error) {
+	config := make(map[string]any)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return config, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return config, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&config); err != nil {
+		return nil, fmt.Errorf("parse existing %s: %w", path, err)
+	}
+	if config == nil {
+		config = make(map[string]any)
+	}
+	return config, nil
+}
+
+// writeJSONConfig replaces path atomically, keeping its mode and following a
+// symlink so dotfile-managed configs stay linked.
+func writeJSONConfig(path string, config map[string]any) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(config); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	mode := os.FileMode(0600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+
+	tmp := path + ".bifrost.tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }

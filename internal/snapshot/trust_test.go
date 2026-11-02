@@ -159,3 +159,31 @@ func TestRenderAndParseTrustSummary(t *testing.T) {
 		t.Fatalf("parsed trust = %q, want %q", parsed.ActiveFiles[0].Confidence, s.ActiveFiles[0].Confidence)
 	}
 }
+
+func TestApplyTrustModelV2ReportedCommandEvidenceIsMedium(t *testing.T) {
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	_, reported := NewCommandEvidence(ReportedCommand{Command: "go test ./...", ExitCode: 0, TestResult: true}, now)
+	_, collected := NewCollectedCommandEvidence(ReportedCommand{Command: "go test ./... -run X", ExitCode: 0, TestResult: true}, now)
+
+	for _, tc := range []struct {
+		name string
+		ev   EvidenceV2
+		want string
+	}{
+		{name: "reported by agent", ev: reported, want: EvidenceMedium},
+		{name: "collected by bifrost", ev: collected, want: EvidenceStrong},
+	} {
+		snap := &SnapshotV2{
+			Observed: ObservedV2{Files: []FileObservedV2{{Path: "src/service.go", Exists: true}}},
+			Evidence: []EvidenceV2{tc.ev},
+			ActiveFiles: []ActiveFileV2{{
+				Path:         "src/service.go",
+				EvidenceRefs: []string{tc.ev.ID},
+			}},
+		}
+		ApplyTrustModelV2(snap)
+		if got := snap.ActiveFiles[0].Trust.Evidence; got != tc.want {
+			t.Errorf("%s: evidence = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

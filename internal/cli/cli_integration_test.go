@@ -41,6 +41,7 @@ func runBifrost(t *testing.T, projectDir string, args ...string) (string, string
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(),
 		"HOME="+projectDir, // isolate home directory
+		"XDG_CONFIG_HOME=", // keep OpenCode config under the isolated home
 		"NO_COLOR=1",
 	)
 	var stdout, stderr bytes.Buffer
@@ -108,7 +109,7 @@ func TestInstallCommandsIncludeIntegrityInstructions(t *testing.T) {
 			name:        "opencode",
 			adapter:     "opencode",
 			detectDir:   ".opencode",
-			commandsDir: filepath.Join(".opencode", "commands"),
+			commandsDir: filepath.Join(".config", "opencode", "commands"),
 		},
 	}
 
@@ -207,16 +208,130 @@ func TestInstallMCPFlag(t *testing.T) {
 		t.Errorf("expected 'MCP server registered' in output, got:\n%s", out)
 	}
 
-	mcpPath := filepath.Join(home, ".claude", "mcp.json")
-	data, err := os.ReadFile(mcpPath)
+	// Claude Code reads user-scope MCP servers from ~/.claude.json
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
 	if err != nil {
-		t.Fatalf("mcp.json not created: %v", err)
+		t.Fatalf(".claude.json not created: %v", err)
 	}
-	if !strings.Contains(string(data), "bifrost") {
-		t.Errorf("mcp.json missing bifrost entry: %s", string(data))
+	var config struct {
+		MCPServers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
 	}
-	if !strings.Contains(string(data), "mcp-serve") {
-		t.Errorf("mcp.json missing mcp-serve arg: %s", string(data))
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse .claude.json: %v", err)
+	}
+	entry, ok := config.MCPServers["bifrost"]
+	if !ok {
+		t.Fatalf(".claude.json missing bifrost entry: %s", string(data))
+	}
+	if entry.Type != "stdio" || entry.Command != "bifrost" || len(entry.Args) != 1 || entry.Args[0] != "mcp-serve" {
+		t.Errorf("unexpected bifrost entry: %+v", entry)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "mcp.json")); !os.IsNotExist(err) {
+		t.Error("install should no longer write ~/.claude/mcp.json")
+	}
+}
+
+func TestInstallMCPPreservesClaudeConfig(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	existing := `{
+  "numStartups": 12345678901234567,
+  "tipsHistory": {"note": "<b>&</b>"},
+  "projects": {"/work/app": {"mcpServers": {"local-one": {"command": "x"}}}},
+  "mcpServers": {"other": {"type": "stdio", "command": "other", "args": []}}
+}`
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(existing), 0644)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "claude-code", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	path := filepath.Join(home, ".claude.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read .claude.json: %v", err)
+	}
+	for _, want := range []string{
+		`"numStartups": 12345678901234567`,
+		`"note": "<b>&</b>"`,
+		`"local-one"`,
+		`"other"`,
+		`"bifrost"`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf(".claude.json missing %s after install:\n%s", want, string(data))
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Errorf("file mode = %v, want 0644 preserved", info.Mode().Perm())
+	}
+}
+
+func TestInstallMCPOpenCode(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".config", "opencode")
+	os.MkdirAll(configDir, 0755)
+	os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{"$schema": "https://opencode.ai/config.json", "theme": "system"}`), 0644)
+
+	out, _, code := runBifrost(t, home, "install", "--adapter", "opencode", "--mcp")
+	if code != 0 {
+		t.Fatalf("install --mcp failed (exit %d): %s", code, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("read opencode.json: %v", err)
+	}
+	var config struct {
+		Theme      string         `json:"theme"`
+		MCPServers map[string]any `json:"mcpServers"`
+		MCP        map[string]struct {
+			Type    string   `json:"type"`
+			Command []string `json:"command"`
+			Enabled bool     `json:"enabled"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse opencode.json: %v", err)
+	}
+	entry, ok := config.MCP["bifrost"]
+	if !ok {
+		t.Fatalf("opencode.json missing mcp.bifrost: %s", string(data))
+	}
+	if entry.Type != "local" || !entry.Enabled || strings.Join(entry.Command, " ") != "bifrost mcp-serve" {
+		t.Errorf("unexpected bifrost entry: %+v", entry)
+	}
+	if config.MCPServers != nil {
+		t.Errorf("OpenCode ignores mcpServers; it must not be written: %s", string(data))
+	}
+	if config.Theme != "system" {
+		t.Errorf("existing keys were not preserved: %s", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "commands", "handin.md")); err != nil {
+		t.Errorf("commands not installed to ~/.config/opencode/commands: %v", err)
+	}
+}
+
+func TestDoctorReportsLegacyClaudeMCPConfig(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
+	os.WriteFile(filepath.Join(home, ".claude", "mcp.json"), []byte(`{"mcpServers":{"bifrost":{"command":"bifrost","args":["mcp-serve"]}}}`), 0644)
+
+	out, _, _ := runBifrost(t, home, "doctor", "--project", home)
+	if !strings.Contains(out, "MCP server not registered") {
+		t.Errorf("legacy ~/.claude/mcp.json must not count as registered:\n%s", out)
+	}
+	if !strings.Contains(out, "old Bifrost files at "+filepath.Join(home, ".claude", "mcp.json")) {
+		t.Errorf("expected legacy path hint, got:\n%s", out)
 	}
 }
 
@@ -231,7 +346,7 @@ func TestDoctorHealthy(t *testing.T) {
 	os.WriteFile(filepath.Join(home, ".claude", "commands", "handin.md"), []byte("test"), 0644)
 	// Write MCP config with bifrost entry
 	os.MkdirAll(filepath.Join(home, ".claude"), 0755)
-	os.WriteFile(filepath.Join(home, ".claude", "mcp.json"), []byte(`{"mcpServers":{"bifrost":{"command":"bifrost","args":["mcp-serve"]}}}`), 0644)
+	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"bifrost":{"type":"stdio","command":"bifrost","args":["mcp-serve"]}}}`), 0644)
 	os.MkdirAll(filepath.Join(home, ".git"), 0755)
 	os.WriteFile(filepath.Join(home, ".gitignore"), []byte(".bifrost/\n"), 0644)
 
@@ -1365,6 +1480,11 @@ func TestPlanExecutionCommands(t *testing.T) {
 	}
 	if len(evidence) == 0 {
 		t.Fatal("expected plan verify to write evidence")
+	}
+	for _, ev := range evidence {
+		if ev.Source != snapshot.EvidenceSourceCollectorCommand {
+			t.Fatalf("plan verify evidence source = %q, want %q (Bifrost ran the command)", ev.Source, snapshot.EvidenceSourceCollectorCommand)
+		}
 	}
 
 	out, _, code = runBifrost(t, home, "plan", "step", "release", "step_2", "--blocked", "waiting for approval", "--project", home)
