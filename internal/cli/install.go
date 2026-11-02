@@ -25,6 +25,7 @@ var (
 	installForce       bool
 	installDryRun      bool
 	installMCP         bool
+	installHooks       bool
 )
 
 func init() {
@@ -32,6 +33,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Overwrite existing command files")
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "Print what would happen without doing it")
 	installCmd.Flags().BoolVar(&installMCP, "mcp", false, "Also register Bifrost as an MCP server")
+	installCmd.Flags().BoolVar(&installHooks, "hooks", false, "Also register lifecycle hooks for automatic handoff (Claude Code)")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -80,6 +82,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 			if err := installMCPConfig(a, mcpPath); err != nil {
 				ui.Error(fmt.Sprintf("%s  MCP registration failed", a.DisplayName()), err.Error())
+			}
+		}
+	}
+
+	if installHooks {
+		for _, a := range targets {
+			if !a.IsInstalled() {
+				continue
+			}
+			h, ok := a.(adapters.HookInstaller)
+			if !ok {
+				ui.Dim(fmt.Sprintf("  %s has no lifecycle hooks; skipped", a.DisplayName()))
+				continue
+			}
+			if err := installHooksConfig(a.DisplayName(), h); err != nil {
+				ui.Error(fmt.Sprintf("%s  hook registration failed", a.DisplayName()), err.Error())
 			}
 		}
 	}
@@ -149,6 +167,27 @@ func installMCPConfig(a adapters.Adapter, mcpPath string) error {
 	}
 
 	ui.Success(fmt.Sprintf("%s  MCP server registered  (%s)", a.DisplayName(), mcpPath))
+	return nil
+}
+
+func installHooksConfig(displayName string, h adapters.HookInstaller) error {
+	path := h.HooksConfigPath()
+	data, err := readConfigFile(path)
+	if err != nil {
+		return err
+	}
+	out, err := h.AddHooks(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if installDryRun {
+		ui.Section(displayName, fmt.Sprintf("would write hooks to %s", path))
+		return nil
+	}
+	if err := writeConfigFile(path, out); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("%s  hooks registered  (%s)", displayName, path))
 	return nil
 }
 
