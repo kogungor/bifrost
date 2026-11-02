@@ -1,6 +1,33 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] — 2026-11-02
+
+### Added
+
+- **Codex support** — `bifrost install` sets up Codex: the four commands install as Agent Skills in `~/.agents/skills/bifrost-<name>/SKILL.md` (invoked as `$bifrost-handoff`, `$bifrost-handin`, `$bifrost-plan`, `$bifrost-review`), and `--mcp` appends `[mcp_servers.bifrost]` to `~/.codex/config.toml` without touching the rest of the file. `$CODEX_HOME` is honored.
+- **`bifrost plan verify` confirmation** — the command lists every step command before running it and asks first. `--dry-run` only lists them, `--yes` skips the prompt, and a non-interactive stdin is refused without `--yes`.
+
+### Changed
+
+- **Evidence trust follows its source** — command and test results Bifrost ran itself (`bifrost plan verify`) are recorded as `collector.command` and count as strong evidence. Results the previous agent reported stay `reported.command` and now count as medium. `bifrost verify` warns when a test-pass claim rests only on reported results. MCP callers can no longer supply `collector.*` sources.
+- **README** — rewritten around the handoff workflow with real `bifrost brief` output; the full command, file, and MCP reference moved to `docs/reference.md`.
+
+### Fixed
+
+- **Claude Code MCP registration** — `bifrost install --mcp` wrote to `~/.claude/mcp.json`, which Claude Code does not read. It now writes a user-scope entry to `~/.claude.json`, preserving the rest of the file. `bifrost doctor` checks the same file, so it no longer reports a server that Claude Code never loads.
+- **OpenCode paths and MCP schema** — slash commands now install to `~/.config/opencode/commands/`, and MCP registration writes `mcp.bifrost` (`type: local`, command array) to `~/.config/opencode/opencode.json`. The old `mcpServers` key was ignored by OpenCode. Both paths honor `$XDG_CONFIG_HOME`.
+- **Legacy install files** — `bifrost doctor` lists Bifrost files left in the old locations so they can be removed. Run `bifrost install --mcp --force` after upgrading.
+- **License** — added the MIT `LICENSE` file the README already referred to.
+- **`claims.evidence` could never warn** — every status claim got an automatic `model_claim` record, and the check counted it as evidence, so briefings listed "Status claims have evidence references" under *Trust this*. Model claims no longer count; not-started items are not counted as unbacked claims.
+- **Briefing freshness contradicted verify** — files that `bifrost verify` found changed or missing are now shown as `freshness=stale` in `bifrost brief`.
+- **`bifrost verify` output** — the "Next action" label no longer runs into its value.
+- **Dependencies** — `go.mod` is tidied; cobra and yaml.v3 were marked indirect.
+
+### Removed
+
+- **`Casks/bifrost.rb`** — a stale 0.5.0 copy; the published cask lives in `kogungor/homebrew-bifrost` and is updated by GoReleaser.
+
+## [1.3.1] — 2026-06-19
 
 ### Added
 
@@ -20,14 +47,8 @@
 - **`/handin` briefing model** — incoming agents now get explicit "Trust this", "Verify this first", and "Do not assume this" guidance when v2 state is available.
 - **MCP snapshot tools** — snapshot read/write tools remain backward-compatible with legacy confidence fields while supporting v2 JSON, evidence, command results, and manual evidence.
 - **Documentation and help text** — README, design docs, CLI help, and release metadata now describe Bifrost as a local context integrity layer, not only a session bridge.
-- **Evidence trust follows its source** — command and test results Bifrost ran itself (`bifrost plan verify`) are recorded as `collector.command` and count as strong evidence. Results the previous agent reported stay `reported.command` and now count as medium. `bifrost verify` warns when a test-pass claim rests only on reported results. MCP callers can no longer supply `collector.*` sources.
 
-### Fixed
-
-- **Claude Code MCP registration** — `bifrost install --mcp` wrote to `~/.claude/mcp.json`, which Claude Code does not read. It now writes a user-scope entry to `~/.claude.json`, preserving the rest of the file. `bifrost doctor` checks the same file, so it no longer reports a server that Claude Code never loads.
-- **OpenCode paths and MCP schema** — slash commands now install to `~/.config/opencode/commands/`, and MCP registration writes `mcp.bifrost` (`type: local`, command array) to `~/.config/opencode/opencode.json`. The old `mcpServers` key was ignored by OpenCode. Both paths honor `$XDG_CONFIG_HOME`.
-- **Legacy install files** — `bifrost doctor` lists Bifrost files left in the old locations so they can be removed. Run `bifrost install --mcp --force` after upgrading.
-- **License** — added the MIT `LICENSE` file the README already referred to.
+---
 
 ## [0.9.0] — 2026-03-28
 
@@ -63,7 +84,7 @@
 
 ---
 
-## [0.7.0] — 2026-03-26
+## [0.7.0] — 2026-03-27
 
 ### Added
 
@@ -93,29 +114,29 @@
 
 ---
 
-## [0.5.0] — 2025-03-18
+## [0.5.0] — 2026-03-22
 
 - Brew cask distribution
 
-## [0.4.1] — 2025-03-15
+## [0.4.1] — 2026-03-21
 
 - Brew cask update
 
-## [0.4.0] — 2025-03-14
+## [0.4.0] — 2026-03-21
 
 - Plan review workflow (`/review`)
 - `bifrost_update_plan` MCP tool
 
-## [0.3.0] — 2025-03-10
+## [0.3.0] — 2026-03-21
 
 - Implementation plans (`/plan`, `bifrost_write_plan`, `bifrost_read_plan`, `bifrost_list_plans`, `bifrost_delete_plan`)
 
-## [0.2.0] — 2025-03-05
+## [0.2.0] — 2026-03-21
 
 - MCP server mode (`bifrost mcp-serve`, `bifrost install --mcp`)
 - `bifrost_read_snapshot`, `bifrost_write_snapshot`, `bifrost_write_note`, `bifrost_status`
 
-## [0.1.0] — 2025-03-01
+## [0.1.0] — 2026-03-21
 
 - Initial release
 - `/handoff` and `/handin` for Claude Code and OpenCode
