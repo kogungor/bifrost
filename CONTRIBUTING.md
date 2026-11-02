@@ -93,7 +93,10 @@ go test ./internal/mcp -v
 ```
 
 The CLI integration tests build the `bifrost` binary and run end-to-end commands
-with an isolated temp `HOME`.
+with an isolated temp `HOME`. Because they exercise a compiled binary, `go test
+-cover` reports `internal/cli` coverage as roughly 5%. Measuring it properly
+needs a `go build -cover` binary and `GOCOVERDIR` in the test harness, which is
+an open task.
 
 ## Common Development Areas
 
