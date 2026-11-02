@@ -1461,7 +1461,7 @@ func TestPlanExecutionCommands(t *testing.T) {
 		t.Fatalf("plan next did not recommend verifying claimed step:\n%s", out)
 	}
 
-	out, _, code = runBifrost(t, home, "plan", "verify", "release", "--project", home)
+	out, _, code = runBifrost(t, home, "plan", "verify", "release", "--yes", "--project", home)
 	if code != 0 {
 		t.Fatalf("plan verify failed (exit %d):\n%s", code, out)
 	}
@@ -1530,7 +1530,7 @@ func TestPlanVerifyFailureExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _, code := runBifrost(t, home, "plan", "verify", "failing", "--project", home)
+	out, _, code := runBifrost(t, home, "plan", "verify", "failing", "--yes", "--project", home)
 	if code != 2 {
 		t.Fatalf("plan verify failure should exit 2, got %d:\n%s", code, out)
 	}
@@ -1948,5 +1948,60 @@ func TestStatusSnapshotSizeWarning(t *testing.T) {
 
 	if !strings.Contains(out, "large snapshot") {
 		t.Errorf("expected large snapshot warning in output, got:\n%s", out)
+	}
+}
+
+func TestPlanVerifyRequiresConfirmation(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &snapshot.PlanV2{
+		SchemaVersion: snapshot.PlanSchemaV2,
+		Name:          "guarded",
+		Title:         "Guarded Plan",
+		Goal:          "Do not run agent-written commands unasked",
+		Status:        snapshot.PlanStatusActive,
+		Version:       "v1",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Steps: []snapshot.PlanStepV2{{
+			ID:     "step_1",
+			Title:  "Touch marker",
+			Status: "claimed_done",
+			Verification: &snapshot.PlanStepVerificationV2{
+				Required: true,
+				Commands: []string{"touch ran-marker"},
+			},
+		}},
+	}
+	if err := snapshot.WritePlanV2(home, plan); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(home, "ran-marker")
+
+	out, _, code := runBifrost(t, home, "plan", "verify", "guarded", "--dry-run", "--project", home)
+	if code != 0 {
+		t.Fatalf("dry run failed (exit %d):\n%s", code, out)
+	}
+	if !strings.Contains(out, "touch ran-marker") || !strings.Contains(out, "nothing was executed") {
+		t.Fatalf("dry run should list the command:\n%s", out)
+	}
+
+	out, _, code = runBifrost(t, home, "plan", "verify", "guarded", "--project", home)
+	if code == 0 {
+		t.Fatalf("non-interactive run without --yes should fail:\n%s", out)
+	}
+	if !strings.Contains(out, "--yes") {
+		t.Fatalf("refusal should explain --yes:\n%s", out)
+	}
+
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("plan command ran without confirmation")
+	}
+	read, err := snapshot.ReadPlanV2(home, "guarded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.Steps[0].Status != "claimed_done" {
+		t.Fatalf("step status changed without running: %q", read.Steps[0].Status)
 	}
 }
