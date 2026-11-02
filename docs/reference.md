@@ -121,7 +121,7 @@ A healthy output looks like:
 ```
   Bifrost Doctor
 
-  ✓  Binary               1.4.0
+  ✓  Binary               1.5.0
   ✓  Claude Code          commands registered  (/path/to/commands)
   ✓  Claude Code          MCP server registered
   ✓  OpenCode             commands registered  (/path/to/commands)
