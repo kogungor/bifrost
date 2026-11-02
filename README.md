@@ -38,9 +38,9 @@ Verification summary
 - Safe next  Run `git status --short` and inspect changed active files.
 
 Verify this first
-- files.active_changed: Active files changed after snapshot: src/tokens.go.
-- claims.evidence: 3 status claim(s) lack evidence.
-- commands.test_evidence_source: Test-pass evidence was reported by the previous agent, not observed by Bifrost.
+- Active files changed after snapshot: src/tokens.go. Next: Inspect changed files before continuing.
+- 3 status claim(s) lack evidence. Next: Treat unevidenced status as model interpretation, not repo fact.
+- Test-pass evidence was reported by the previous agent, not observed by Bifrost. Next: Re-run the tests, or `bifrost plan verify`, before trusting the claim.
 
 Do not assume
 - Do not assume active files are unchanged.

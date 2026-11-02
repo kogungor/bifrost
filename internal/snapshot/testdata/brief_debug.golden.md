@@ -13,10 +13,10 @@ Verification summary
 - Safe next  Do not assume tests pass; inspect failing token tests first.
 
 Trust this
-- snapshot.age: Snapshot is 30 minutes old.
+- Snapshot is 30 minutes old.
 
 Verify this first
-- commands.test_claims: Test claim has no passing evidence. Next: Run the relevant test command.
+- Test claim has no passing evidence. Next: Run the relevant test command.
 
 Do not assume
 - Do not assume tests pass.
