@@ -36,3 +36,6 @@ homebrew_casks:
       owner: kogungor
       name: homebrew-bifrost
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: Kubilay Onur Gungor
+      email: ko.gungor@gmail.com
