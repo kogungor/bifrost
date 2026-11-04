@@ -104,3 +104,83 @@ func TestWritePlanExecutionStatePreservesLegacyPlanMetadata(t *testing.T) {
 		t.Fatalf("json step not verified: %+v", readJSON.Steps[0])
 	}
 }
+
+func TestWritePlanSyncsExistingExecutionState(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &Plan{
+		BifrostVersion: CurrentVersion,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     "test",
+		Status:         PlanStatusActive,
+		Title:          "Sync",
+		Steps: []PlanStep{
+			{Description: "Build", Status: "pending", Verify: []string{"go build ./..."}},
+			{Description: "Test", Status: "pending", Verify: []string{"go test ./..."}},
+		},
+	}
+	if err := WritePlan(root, "sync", plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PlanJSONPath(root, "sync")); !os.IsNotExist(err) {
+		t.Fatal("WritePlan should not create JSON state on its own")
+	}
+
+	// Simulate `bifrost plan verify` passing both steps.
+	v2, err := LoadPlanForExecution(root, "sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range v2.Steps {
+		v2.Steps[i].Status = "verified_done"
+		v2.Steps[i].Verification.LastResult = &CommandResultRefV2{State: "pass", Command: v2.Steps[i].Verification.Commands[0], CapturedAt: now}
+	}
+	if err := WritePlanExecutionState(root, v2); err != nil {
+		t.Fatal(err)
+	}
+
+	// An agent edits the Markdown plan: step 0 unchanged, step 1 gets a new command,
+	// and a step is added.
+	legacy, err := ReadPlan(root, "sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Steps[1].Verify = []string{"go test -race ./..."}
+	legacy.Steps = append(legacy.Steps, PlanStep{Description: "Release", Status: "pending"})
+	if err := WritePlan(root, "sync", legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	synced, err := ReadPlanV2(root, "sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(synced.Steps) != 3 {
+		t.Fatalf("JSON state should gain the new step, got %d steps", len(synced.Steps))
+	}
+	if synced.Steps[0].Status != "verified_done" || synced.Steps[0].Verification.LastResult == nil {
+		t.Fatalf("untouched step should keep its verification, got %+v", synced.Steps[0])
+	}
+	if synced.Steps[1].Status != "claimed_done" || synced.Steps[1].Verification.LastResult != nil {
+		t.Fatalf("changed commands should drop the old result, got %+v", synced.Steps[1])
+	}
+	if synced.Steps[1].Verification.Commands[0] != "go test -race ./..." {
+		t.Fatalf("new command not synced: %+v", synced.Steps[1].Verification)
+	}
+
+	if err := DeletePlan(root, "sync"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PlanJSONPath(root, "sync")); !os.IsNotExist(err) {
+		t.Fatal("DeletePlan should remove JSON state")
+	}
+}
+
+func TestPlanWithoutGoalValidates(t *testing.T) {
+	now := time.Now().UTC()
+	v2 := PlanToV2(&Plan{CreatedAt: now, UpdatedAt: now, SourceTool: "test", Status: PlanStatusDraft, Title: "No goal"}, "nogoal")
+	if err := ValidatePlanV2(v2); err != nil {
+		t.Fatalf("a plan without a goal should validate: %v", err)
+	}
+}

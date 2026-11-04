@@ -8,6 +8,7 @@ import (
 	"math"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -279,6 +280,7 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 							"properties": map[string]any{
 								"description": map[string]any{"type": "string"},
 								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+								"verify":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Shell commands that prove this step is done (for example `go test ./internal/auth/...`). `bifrost plan verify` lists them, asks the user, then runs them. One command per item, no newlines."},
 							},
 							"required": []string{"description"},
 						},
@@ -350,10 +352,11 @@ func (ts *ToolSet) Definitions() []ToolDefinition {
 								"status":      map[string]any{"type": "string", "enum": []string{"pending", "done", "blocked"}},
 								"description": map[string]any{"type": "string", "description": "New step description — resets approval if plan was already approved"},
 								"files":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "New file list (replaces existing)"},
+								"verify":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "New verification commands (replaces existing; [] removes them). Changing them resets approval like a description change."},
 							},
 							"required": []string{"index"},
 						},
-						"description": "Step updates (status, description, and/or files)",
+						"description": "Step updates (status, description, files, and/or verification commands)",
 					},
 				},
 			},
@@ -937,11 +940,16 @@ func (ts *ToolSet) readPlan(args json.RawMessage) (any, error) {
 		if files == nil {
 			files = []string{}
 		}
+		verify := s.Verify
+		if verify == nil {
+			verify = []string{}
+		}
 		steps[i] = map[string]any{
 			"id":          s.ID,
 			"description": s.Description,
 			"status":      s.Status,
 			"files":       files,
+			"verify":      verify,
 		}
 	}
 
@@ -997,6 +1005,7 @@ type writePlanParams struct {
 	Steps      []struct {
 		Description string   `json:"description"`
 		Files       []string `json:"files"`
+		Verify      []string `json:"verify"`
 	} `json:"steps"`
 	Constraints []string `json:"constraints"`
 }
@@ -1055,10 +1064,14 @@ func (ts *ToolSet) writePlan(args json.RawMessage) (any, error) {
 				return nil, fmt.Errorf("invalid file path: %s", f)
 			}
 		}
+		if err := validatePlanCommands(s.Verify); err != nil {
+			return nil, err
+		}
 		steps = append(steps, snapshot.PlanStep{
 			Description: s.Description,
 			Status:      "pending",
 			Files:       s.Files,
+			Verify:      s.Verify,
 		})
 	}
 
@@ -1106,6 +1119,7 @@ type updatePlanParams struct {
 		Status      string   `json:"status"`
 		Description string   `json:"description"`
 		Files       []string `json:"files"`
+		Verify      []string `json:"verify"` // nil leaves commands unchanged; [] removes them
 	} `json:"step_updates"`
 	// Consensus params
 	ReviewOutcome  string `json:"review_outcome"`  // approved | needs_revision
@@ -1247,6 +1261,18 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 			}
 			plan.Steps[su.Index].Files = su.Files
 		}
+		if su.Verify != nil {
+			if err := validatePlanCommands(su.Verify); err != nil {
+				return nil, err
+			}
+			if !slices.Equal(su.Verify, plan.Steps[su.Index].Verify) {
+				structuralEdit = true
+			}
+			plan.Steps[su.Index].Verify = su.Verify
+			if len(su.Verify) == 0 {
+				plan.Steps[su.Index].Verify = nil
+			}
+		}
 	}
 	// A structural edit after approval invalidates the review — reset to draft
 	if wasApproved && structuralEdit && params.ReviewOutcome == "" && !params.ForceAccept {
@@ -1293,6 +1319,26 @@ func (ts *ToolSet) updatePlan(args json.RawMessage) (any, error) {
 		result["deadlock_reason"] = plan.DeadlockReason
 	}
 	return result, nil
+}
+
+// validatePlanCommands checks verification commands an agent proposes for a
+// plan step. They are stored one per line in the Markdown plan.
+func validatePlanCommands(commands []string) error {
+	if len(commands) > maxArrayItems {
+		return fmt.Errorf("step verify exceeds %d items", maxArrayItems)
+	}
+	for _, c := range commands {
+		if strings.TrimSpace(c) == "" {
+			return fmt.Errorf("verification commands must not be empty")
+		}
+		if strings.ContainsAny(c, "\r\n") {
+			return fmt.Errorf("verification command must be a single line: %q", c)
+		}
+		if len(c) > maxFieldLen {
+			return fmt.Errorf("verification command exceeds %d characters", maxFieldLen)
+		}
+	}
+	return nil
 }
 
 // deletePlanParams maps the JSON input for bifrost_delete_plan.

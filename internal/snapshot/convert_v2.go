@@ -479,12 +479,16 @@ func planStepsToV2(steps []PlanStep) []PlanStepV2 {
 		if id == "" {
 			id = stableID("step", step.Description)
 		}
-		out = append(out, PlanStepV2{
+		v2 := PlanStepV2{
 			ID:            id,
 			Title:         step.Description,
 			Status:        planStepStatusToV2(step.Status),
 			ExpectedFiles: step.Files,
-		})
+		}
+		if len(step.Verify) > 0 {
+			v2.Verification = &PlanStepVerificationV2{Commands: step.Verify}
+		}
+		out = append(out, v2)
 	}
 	return out
 }
@@ -492,12 +496,16 @@ func planStepsToV2(steps []PlanStep) []PlanStepV2 {
 func planStepsFromV2(steps []PlanStepV2) []PlanStep {
 	out := make([]PlanStep, 0, len(steps))
 	for _, step := range steps {
-		out = append(out, PlanStep{
+		legacy := PlanStep{
 			ID:          step.ID,
 			Description: step.Title,
 			Status:      planStepStatusFromV2(step.Status),
 			Files:       step.ExpectedFiles,
-		})
+		}
+		if step.Verification != nil {
+			legacy.Verify = step.Verification.Commands
+		}
+		out = append(out, legacy)
 	}
 	return out
 }

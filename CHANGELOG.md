@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Verification commands from `/plan`** — `bifrost_write_plan` and `bifrost_update_plan` accept a `verify` list per step, `bifrost_read_plan` returns it, and the Markdown plan stores it as `- verify:` lines. `/plan` now proposes the commands that prove each step and `/review` checks them, so `bifrost plan verify` works without editing JSON by hand. Changing a step's commands resets approval.
+
 ### Fixed
 
+- **Plan state drift** — once `.bifrost/plans/<name>.json` existed, edits made through the MCP plan tools never reached it, so `plan status`, `plan next` and `plan verify` worked from the old plan. MCP writes now sync it, keeping a step's result only while its status and commands are unchanged. `bifrost_delete_plan` removes it too.
+- **`bifrost migrate`** no longer rejects plans without a goal, which `bifrost_write_plan` allows.
 - **Homebrew install instructions** — `brew install --cask bifrost` installs an unrelated app from Homebrew's main cask repository, even after tapping. The README, reference and `bifrost update` now use the full name, `kogungor/bifrost/bifrost`.
 - **Silent failures** — unknown commands, unknown flags, missing arguments and unknown subcommands of `plan`, `evidence` and `context` exited 1 with no output. They now print the error and a usage hint.
 - **`bifrost --version`** works.
@@ -14,7 +20,7 @@
 ### Changed
 
 - Help text: the root quick start puts `--mcp` and `bifrost init` first; `install`, `update`, `snapshot`, `diff` and `verify --fix` describe what they actually do; `bifrost hook` is hidden from the command list; `plan status` labels the next action "Next action".
-- Docs: upgrade steps, which commands need MCP, plan arguments and manual verification commands, the secret formats Bifrost redacts, Codex config paths, and the release process.
+- Docs: upgrade steps, which commands need MCP, plan arguments and verification commands, the secret formats Bifrost redacts, Codex config paths, and the release process.
 
 ## [1.5.0] — 2026-11-02
 
