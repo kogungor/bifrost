@@ -14,6 +14,8 @@ import (
 
 var contextCmd = &cobra.Command{
 	Use:   "context",
+	Args:  cobra.NoArgs,
+	RunE:  showGroupHelp,
 	Short: "Analyze and update durable BIFROST.md project context",
 	Long:  "Analyzes BIFROST.md for missing, placeholder, stale, or contradictory durable project context and proposes explicit promotion candidates.",
 }

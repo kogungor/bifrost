@@ -1455,7 +1455,7 @@ func TestPlanExecutionCommands(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("plan status failed (exit %d):\n%s", code, out)
 	}
-	for _, want := range []string{"Health", "Claimed", "Missing files", "Next safest action"} {
+	for _, want := range []string{"Health", "Claimed", "Missing files", "Next action"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan status missing %q:\n%s", want, out)
 		}
@@ -2190,5 +2190,35 @@ func TestHookPostCompactKeepsAgentNote(t *testing.T) {
 	note, _ = snapshot.ReadNote(home)
 	if note.Text != "agent note" {
 		t.Fatalf("agent note was overwritten: %+v", note)
+	}
+}
+
+func TestUsageErrorsAreReported(t *testing.T) {
+	home := t.TempDir()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"nosuchcmd"}, `unknown command "nosuchcmd" for "bifrost"`},
+		{[]string{"install", "--bogus"}, "unknown flag: --bogus"},
+		{[]string{"plan", "show"}, `unknown command "show" for "bifrost plan"`},
+		{[]string{"evidence", "lst"}, `unknown command "lst" for "bifrost evidence"`},
+		{[]string{"context", "chek"}, `unknown command "chek" for "bifrost context"`},
+	}
+	for _, tc := range cases {
+		out, errOut, code := runBifrost(t, home, tc.args...)
+		if code == 0 {
+			t.Errorf("bifrost %v: expected a non-zero exit", tc.args)
+		}
+		if !strings.Contains(out+errOut, tc.want) {
+			t.Errorf("bifrost %v: expected %q in output, got:\n%s%s", tc.args, tc.want, out, errOut)
+		}
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	out, _, code := runBifrost(t, t.TempDir(), "--version")
+	if code != 0 || !strings.HasPrefix(out, "bifrost ") {
+		t.Fatalf("--version: exit %d, output %q", code, out)
 	}
 }

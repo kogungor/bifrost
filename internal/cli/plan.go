@@ -19,6 +19,8 @@ const planVerifyTimeout = 2 * time.Minute
 
 var planCmd = &cobra.Command{
 	Use:   "plan",
+	Args:  cobra.NoArgs,
+	RunE:  showGroupHelp,
 	Short: "Inspect and update Bifrost plans",
 }
 
@@ -290,7 +292,7 @@ func printPlanStatus(root string, plan *snapshot.PlanV2) {
 	if summary.MissingFiles > 0 {
 		ui.Plain(fmt.Sprintf("Missing files %d", summary.MissingFiles))
 	}
-	ui.Section("Next safest action", summary.NextAction)
+	ui.Section("Next action", summary.NextAction)
 }
 
 // confirmPlanCommands asks on the terminal before plan commands run. It

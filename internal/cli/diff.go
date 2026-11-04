@@ -15,7 +15,7 @@ import (
 var diffCmd = &cobra.Command{
 	Use:   "diff [latest~1..latest]",
 	Short: "Show changes between the latest archived snapshot and current snapshot",
-	Long:  "Shows a compact snapshot diff for task, next step, risks, open questions, active files, and trust changes. Supports human-readable output and --json.",
+	Long:  "Shows a compact snapshot diff for task, next step, risks, open questions, active files, and trust changes between the most recent archived snapshot and the current one. The only accepted range is latest~1..latest, which is also the default. Supports human-readable output and --json.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runDiff,
 }
