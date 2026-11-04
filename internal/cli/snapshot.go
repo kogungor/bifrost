@@ -11,7 +11,7 @@ import (
 
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
-	Short: "Manage canonical snapshot state",
+	Short: "Enrich session.json with observed git and file facts (--enrich)",
 	RunE:  runSnapshot,
 }
 

@@ -45,7 +45,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// 2. Check each adapter
 	for _, a := range adapters.All() {
 		if !a.IsInstalled() {
-			ui.Warning(fmt.Sprintf("%s  not detected (optional)", a.DisplayName()))
+			ui.Warning(fmt.Sprintf("%-20s not detected (optional)", a.DisplayName()))
 			continue
 		}
 
@@ -140,9 +140,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		// Snapshot
 		snap, snapErr := snapshot.Read(root)
 		if snapErr != nil {
-			issues++
-			ui.Error("Snapshot             none found",
-				"Run /handoff in your AI coding tool to create a snapshot.")
+			ui.Warning("Snapshot             none yet")
+			ui.Dim("  Run /handoff in your AI coding tool to create the first one.")
 		} else {
 			age := snap.Age()
 			if age > 24*time.Hour {

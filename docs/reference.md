@@ -41,6 +41,8 @@ What does **not** get captured: full file contents, conversation history, secret
 
 ## Setup
 
+Install the binary with `brew install --cask kogungor/bifrost/bifrost` (the full name matters: plain `bifrost` is an unrelated cask in Homebrew's main repository), the install script, or a release archive; see the [README](../README.md#install).
+
 ### 1. Register Commands
 
 This installs `/handoff`, `/handin`, `/plan`, and `/review` for all detected AI tools. Codex has no custom slash commands, so there they install as skills invoked with `$bifrost-handoff`, `$bifrost-handin`, `$bifrost-plan`, and `$bifrost-review`:
@@ -55,7 +57,7 @@ To also register Bifrost as an MCP server (recommended — enables richer `/hand
 bifrost install --mcp
 ```
 
-Without `--mcp`, `/handin` falls back to reading `.bifrost/session.md` directly — it still works, but MCP gives it structured access to all fields.
+Without `--mcp`, `/handoff` and `/handin` fall back to writing and reading `.bifrost/session.md` directly; they still work, but MCP gives them structured access to every field. `/plan` and `/review` need the MCP server.
 
 `--mcp` writes each tool's own global config:
 
@@ -65,7 +67,7 @@ Without `--mcp`, `/handin` falls back to reading `.bifrost/session.md` directly 
 | OpenCode    | `~/.config/opencode/commands/<name>.md`   | `~/.config/opencode/opencode.json` → `mcp.bifrost`   |
 | Codex       | `~/.agents/skills/bifrost-<name>/SKILL.md` | `~/.codex/config.toml` → `[mcp_servers.bifrost]`     |
 
-OpenCode paths follow `$XDG_CONFIG_HOME` and Codex paths follow `$CODEX_HOME` when set. Everything else in these files is preserved; the Codex TOML file is only appended to, so its comments stay intact. The tools' own CLIs can register the same server:
+OpenCode paths follow `$XDG_CONFIG_HOME` when set. For Codex, `config.toml` follows `$CODEX_HOME`; skills always go to `~/.agents/skills`. Everything else in these files is preserved; the Codex TOML file is only appended to, so its comments stay intact. The tools' own CLIs can register the same server:
 
 ```bash
 claude mcp add --scope user bifrost -- bifrost mcp-serve
@@ -89,7 +91,7 @@ To see what would happen without making changes:
 bifrost install --dry-run
 ```
 
-To overwrite existing command files (e.g., after an update):
+Command files change between releases, and `install` keeps files that already exist. After upgrading Bifrost, overwrite them (add `--mcp` and `--hooks` if you use them):
 
 ```bash
 bifrost install --force
@@ -108,7 +110,7 @@ This creates:
 - `.bifrost/history/` for archived snapshots
 - `BIFROST.md` — a project config file you can commit to git
 
-`BIFROST.md` gives the incoming AI tool persistent project context (stack, conventions, important files, commands). It's optional — everything works without it.
+`BIFROST.md` gives the incoming AI tool persistent project context (stack, conventions, important files, commands). The commands work without it, but the Claude Code hooks act only in projects that have `.bifrost/` or `BIFROST.md`, so run `bifrost init` in any project where you want automatic handoff.
 
 ### 3. Verify
 
@@ -124,6 +126,7 @@ A healthy output looks like:
   ✓  Binary               1.5.0
   ✓  Claude Code          commands registered  (/path/to/commands)
   ✓  Claude Code          MCP server registered
+  ✓  Claude Code          hooks registered
   ✓  OpenCode             commands registered  (/path/to/commands)
   ✓  OpenCode             MCP server registered
   ✓  Codex                commands registered  (/path/to/skills)
@@ -354,9 +357,29 @@ You can also review arbitrary files:
 
 Plans support a full lifecycle: `draft` → `active` → `completed` → `archived`.
 
+Other arguments:
+
+| Command | What it does |
+| ------- | ------------ |
+| `/plan <name> --next` | Read-only: show the safest next step. |
+| `/plan <name> --verify` | Read-only: show plan health and which steps lack evidence. |
+| `/plan <name> --revise` | Address review feedback and send the plan back for review. |
+| `/plan <name> --force-accept` | Accept a plan that reached the revision limit without consensus. |
+
+A plan's title and goal are fixed once it is written; revisions change its steps.
+
 ### Verifying Plan Steps
 
-A plan step can list shell commands that prove it is done. `bifrost plan verify` runs them and records the results as evidence Bifrost observed itself (`collector.command`):
+A plan step can list shell commands that prove it is done. `bifrost plan verify` runs them and records the results as evidence Bifrost observed itself (`collector.command`).
+
+`/plan` does not write verification commands yet. Add them to the plan's JSON state, `.bifrost/plans/<name>.json`, under `steps[].verification.commands` (a list of shell commands). That file is created the first time `bifrost plan step`, `bifrost plan verify` or `bifrost migrate` runs for the plan.
+
+```bash
+bifrost plan step auth-refactor step_2 --claimed-done
+bifrost plan step auth-refactor step_3 --blocked "waiting on API keys"
+```
+
+`plan step` marks a step `claimed_done`, `verified_done` or `blocked` by hand; `bifrost plan next <name>` prints the safest next action.
 
 ```bash
 bifrost plan status auth-refactor
@@ -407,7 +430,22 @@ bifrost verify --json
 
 `bifrost verify` checks snapshot age, branch and commit drift, active file existence and metadata, evidence-backed claims, unresolved high severity risks/questions, active plan state, and secret-like values in local Bifrost state. It never runs destructive commands.
 
-Evidence records where it came from. Facts Bifrost observed itself (git state, file metadata, commands run by `bifrost plan verify`) use `collector.*` sources and count as strong evidence. Command results the previous agent reported (`reported.command`) count as medium: they are detailed claims, not observations. When a test-pass claim rests only on reported results, `bifrost verify` warns and recommends re-running the tests. MCP callers cannot use `collector.*` sources.
+Evidence records where it came from. Facts Bifrost observed itself (git state, file metadata, commands run by `bifrost plan verify`) use `collector.*` sources and count as strong evidence. Command results the previous agent reported (`reported.command`) count as medium: they are detailed claims, not observations. When a test-pass claim rests only on reported results, `bifrost verify` warns and recommends re-running the tests. Hook captures record commands from the Claude Code transcript as `collector.transcript`, which also counts as strong. MCP callers cannot use `collector.*` sources.
+
+### Secret Redaction
+
+Snapshots, handoff notes and evidence are scanned before they are written, and `bifrost scrub` and `bifrost doctor --security` scan existing state. Detected formats:
+
+- Private key blocks (`-----BEGIN ... PRIVATE KEY-----`)
+- Anthropic, OpenAI, Stripe (`sk_`/`rk_`) and Google (`AIza...`) API keys
+- GitHub tokens, AWS access keys
+- Slack tokens (`xox*`, `xapp`) and Slack webhook URLs
+- `Bearer` tokens and JWTs
+- Database URLs with embedded credentials
+- `*_SECRET`, `*_TOKEN`, `*_KEY` style assignments
+- Long random-looking values assigned to `api_key`, `secret`, `token` or `password`
+
+Matches are replaced with a `[REDACTED:<kind>]` marker. Detection is pattern-based, so treat it as a safety net, not a guarantee.
 
 ### JSON State, Validation, And Migration
 
@@ -503,42 +541,45 @@ REST API for the mobile app. Currently in beta.
 
 | Command                               | Description                                      |
 | ------------------------------------- | ------------------------------------------------ |
-| `bifrost install`                     | Register slash commands for detected AI tools    |
+| `bifrost install`                     | Register commands (skills in Codex) for detected AI tools |
+| `bifrost install --force`             | Overwrite existing command files after an upgrade |
 | `bifrost install --mcp`               | Also register Bifrost as an MCP server           |
 | `bifrost install --hooks`             | Register Claude Code hooks for automatic handoff |
-| `bifrost hook <event>`                | Run from a hook: pre-compact, post-compact, session-start, session-end |
+| `bifrost hook <event>`                | Run from a hook (hidden): pre-compact, post-compact, session-start, session-end |
 | `bifrost init`                        | Initialize Bifrost in the current project        |
 | `bifrost status`                      | Show snapshot age, size, intent, and active plan |
 | `bifrost export`                      | Export snapshot and/or plans as JSON to stdout   |
 | `bifrost validate`                    | Validate snapshot and plan state                 |
 | `bifrost migrate --dry-run`           | Preview Markdown-to-JSON migration               |
-| `bifrost render`                      | Render JSON v2 state back to Markdown            |
+| `bifrost render`                      | Render JSON v2 state back to Markdown (`-o <file>`) |
 | `bifrost snapshot --enrich`           | Collect observed git/file/project facts          |
 | `bifrost evidence list`               | List evidence records                            |
 | `bifrost evidence show <id>`          | Show one evidence record                         |
 | `bifrost verify`                      | Check freshness, evidence, risks, files, secrets |
+| `bifrost verify --strict`             | Exit non-zero on warnings too (for CI)           |
 | `bifrost brief --mode implement`      | Print compact mode-aware briefing                |
 | `bifrost scrub --check`               | Check local Bifrost state for secret-like values |
 | `bifrost scrub --write --history`     | Redact secret-like values in local Bifrost state |
 | `bifrost plan status <name>`          | Show plan health and step status                 |
 | `bifrost plan next <name>`            | Show safest next plan action                     |
+| `bifrost plan step <name> <step-id> --claimed-done` | Mark a step by hand (`--verified-done`, `--blocked <reason>`) |
 | `bifrost plan verify <name>`          | List plan verification commands, confirm, run them |
 | `bifrost plan verify <name> --dry-run` | Only list the commands that would run            |
 | `bifrost plan verify <name> --yes`    | Run them without the confirmation prompt         |
-| `bifrost context check`               | Analyze durable `BIFROST.md` context             |
+| `bifrost context check`               | Analyze durable `BIFROST.md` context (`--json`)  |
 | `bifrost context update --dry-run`    | Preview `BIFROST.md` promotion patch             |
-| `bifrost promote --accept <id|all>`   | Promote accepted durable context candidates      |
+| `bifrost promote --accept <id|all>`   | Promote accepted durable context candidates (`--ignore`, `--ignore-forever` to dismiss) |
 | `bifrost diff`                        | Compare latest archived and current snapshot     |
-| `bifrost timeline`                    | Show local snapshot/verify/plan event timeline   |
-| `bifrost history`                     | List archived snapshots                          |
+| `bifrost timeline`                    | Show local snapshot/verify/plan event timeline (`--limit`) |
+| `bifrost history`                     | List archived snapshots (`--limit`)              |
 | `bifrost restore <n>`                 | Restore a historical snapshot                    |
 | `bifrost restore <n> --preview`       | Preview restore without modifying files          |
 | `bifrost doctor`                      | Diagnose installation and configuration          |
 | `bifrost doctor --security`           | Check local Bifrost state for secret-like values |
-| `bifrost doctor --fix`                | Diagnose and automatically fix detected issues   |
-| `bifrost update`                      | Show update instructions for the latest release  |
+| `bifrost doctor --fix`                | Fix what it can: command files, MCP registration, `.gitignore`, `BIFROST.md` |
+| `bifrost update`                      | Show upgrade instructions for the latest release (no self-update) |
 | `bifrost update --check`              | Check if a newer version is available            |
-| `bifrost version`                     | Print version                                    |
+| `bifrost version`, `bifrost --version` | Print version                                   |
 | `bifrost completion <shell>`          | Generate shell completions (bash, zsh, fish)     |
 
 ### Global Flags
@@ -589,7 +630,7 @@ bifrost diff
 | `.bifrost/handoff.md`               | Freeform handoff note                    | No      |
 | `.bifrost/history/`                 | Archived Markdown and JSON snapshots     | No      |
 | `.bifrost/evidence/`                | Optional structured evidence records     | No      |
-| `.bifrost/plans/<name>.json`        | Canonical JSON v2 plans                  | No      |
+| `.bifrost/plans/<name>.json`        | JSON v2 plan state (created by `plan step`, `plan verify` or `migrate`) | No      |
 | `.bifrost/<name>.plan.md`           | Human-readable implementation plans      | No      |
 | `.bifrost/timeline.jsonl`           | Local snapshot/verify/plan event history | No      |
 | `.bifrost/config.json`              | Optional local Bifrost runtime config    | No      |
@@ -608,7 +649,7 @@ Register it:
 bifrost install --mcp
 ```
 
-This writes config to each adapter's MCP config path (`~/.claude.json` for Claude Code, `~/.config/opencode/opencode.json` for OpenCode). The server runs as a subprocess — no network sockets, no background daemon.
+This writes config to each adapter's MCP config path: `~/.claude.json` for Claude Code, `~/.config/opencode/opencode.json` for OpenCode, and `~/.codex/config.toml` (`$CODEX_HOME/config.toml`) for Codex. The server runs as a subprocess — no network sockets, no background daemon.
 
 ### Snapshot Tools
 
@@ -624,7 +665,7 @@ This writes config to each adapter's MCP config path (`~/.claude.json` for Claud
 | Tool                  | Description                                                        |
 | --------------------- | ------------------------------------------------------------------ |
 | `bifrost_read_plan`   | Read a named plan (default: "plan")                                |
-| `bifrost_write_plan`  | Create a new plan with title, goal, steps, and constraints         |
+| `bifrost_write_plan`  | Create or overwrite a plan with title, goal, steps, and constraints |
 | `bifrost_update_plan` | Add review notes, update step statuses/content, change plan status |
 | `bifrost_delete_plan` | Delete a named plan                                                |
 | `bifrost_list_plans`  | List all plans with name, status, title, and completion %          |

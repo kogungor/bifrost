@@ -20,8 +20,9 @@ import (
 var hookEvents = []string{"pre-compact", "post-compact", "session-start", "session-end"}
 
 var hookCmd = &cobra.Command{
-	Use:   "hook <event>",
-	Short: "Run Bifrost from an AI tool hook (reads the hook's JSON on stdin)",
+	Use:    "hook <event>",
+	Hidden: true,
+	Short:  "Run Bifrost from an AI tool hook (reads the hook's JSON on stdin)",
 	Long: "Called by Claude Code hooks that `bifrost install --hooks` registers. Events:\n" +
 		"  pre-compact, session-end  record the session's commands and edits from its transcript\n" +
 		"  post-compact              save the compaction summary as the handoff note\n" +

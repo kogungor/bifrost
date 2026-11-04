@@ -14,6 +14,8 @@ import (
 
 var evidenceCmd = &cobra.Command{
 	Use:   "evidence",
+	Args:  cobra.NoArgs,
+	RunE:  showGroupHelp,
 	Short: "Inspect snapshot evidence records",
 }
 

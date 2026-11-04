@@ -177,7 +177,7 @@ Close the briefing block:
   ─────────────────────────────────────────
 ```
 
-If `/handin --verify` was used, prepend the verification summary from Step 2 to
+If `/handin --verify` was used, prepend the verification summary from Step 3 to
 this briefing.
 
 If `BIFROST.md` exists, prepend the briefing with:
