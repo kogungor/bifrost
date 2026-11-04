@@ -47,6 +47,11 @@ Analyze the plan critically. Consider:
 - **Over-engineering**: Is anything unnecessarily complex?
 - **Testing**: Is the test strategy adequate?
 - **File coverage**: Are all affected files listed?
+- **Verification commands**: Does each step's `verify` list actually prove
+  that step, using the project's real commands? Are any commands destructive,
+  slow, dependent on secrets or the network, or unrelated to the step? The user
+  confirms before `bifrost plan verify` runs them, but flag anything they should
+  not approve.
 
 **Decide your outcome:** approved or needs_revision.
 
@@ -63,7 +68,7 @@ If `review_outcome` is `"approved"`:
 
 If `review_outcome` is `"needs_revision"`:
 - The planner must revise and re-submit. If `deadlock_detected` is returned as true in the
-  response, inform the user that max revisions has been reached and `/plan --force-accept`
+  response, inform the user that max revisions has been reached and `/plan <name> --force-accept`
   is available to override.
 
 **Step 2b — File review mode** (when reviewing an arbitrary file)
@@ -95,8 +100,8 @@ For plan reviews, print:
   - <finding 3>
 
   <If approved:>  Plan is now active. Work can begin.
-  <If needs_revision:>  Planner should run /plan --revise to address feedback.
-  <If deadlock:>  Max revisions reached. Planner can run /plan --force-accept to override.
+  <If needs_revision:>  Planner should run /plan <name> --revise to address feedback.
+  <If deadlock:>  Max revisions reached. Planner can run /plan <name> --force-accept to override.
 ```
 
 For file reviews, print:

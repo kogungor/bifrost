@@ -13,14 +13,14 @@ import (
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Check for or install updates",
+	Short: "Check for a newer release and show how to upgrade",
 	RunE:  runUpdate,
 }
 
 var updateCheck bool
 
 func init() {
-	updateCmd.Flags().BoolVar(&updateCheck, "check", false, "Check for updates without installing")
+	updateCmd.Flags().BoolVar(&updateCheck, "check", false, "Only report whether a newer version exists")
 	rootCmd.AddCommand(updateCmd)
 }
 
@@ -51,7 +51,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if updateCheck {
 		ui.Warning(fmt.Sprintf("Update available: %s → %s", Version, latest.TagName))
 		ui.Dim(fmt.Sprintf("  %s", latest.HTMLURL))
-		ui.Dim("  Run 'bifrost update' to install.")
+		ui.Dim("  Run 'bifrost update' for upgrade instructions.")
 		return nil
 	}
 
@@ -61,7 +61,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	ui.Blank()
 	ui.Dim("Auto-update is not yet implemented.")
 	ui.Dim(fmt.Sprintf("Download the latest release: %s", latest.HTMLURL))
-	ui.Dim("Or run: brew upgrade bifrost")
+	ui.Dim("Or run: brew upgrade --cask kogungor/bifrost/bifrost")
 
 	return nil
 }

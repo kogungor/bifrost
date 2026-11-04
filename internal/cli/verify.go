@@ -26,7 +26,7 @@ var verifyFix bool
 func init() {
 	verifyCmd.Flags().BoolVar(&verifyJSON, "json", false, "Print machine-readable JSON")
 	verifyCmd.Flags().BoolVar(&verifyStrict, "strict", false, "Exit non-zero for warnings")
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Apply safe non-destructive fixes when available")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Apply safe fixes (none are automatic yet; reserved for future use)")
 	rootCmd.AddCommand(verifyCmd)
 }
 

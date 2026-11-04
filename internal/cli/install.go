@@ -16,7 +16,7 @@ var CommandsFS embed.FS
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Register slash commands for installed AI tools",
+	Short: "Register Bifrost commands, and optionally the MCP server and hooks, for detected AI tools",
 	RunE:  runInstall,
 }
 
@@ -30,7 +30,7 @@ var (
 
 func init() {
 	installCmd.Flags().StringVar(&installAdapterFlag, "adapter", "", "Install for a specific adapter only (claude-code, opencode, codex)")
-	installCmd.Flags().BoolVar(&installForce, "force", false, "Overwrite existing command files")
+	installCmd.Flags().BoolVar(&installForce, "force", false, "Overwrite existing command files (run after upgrading Bifrost)")
 	installCmd.Flags().BoolVar(&installDryRun, "dry-run", false, "Print what would happen without doing it")
 	installCmd.Flags().BoolVar(&installMCP, "mcp", false, "Also register Bifrost as an MCP server")
 	installCmd.Flags().BoolVar(&installHooks, "hooks", false, "Also register lifecycle hooks for automatic handoff (Claude Code)")
@@ -51,7 +51,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		targets = adapters.All()
 	}
 
-	installed := 0
+	installed, failed := 0, 0
 	for _, a := range targets {
 		if !a.IsInstalled() {
 			ui.Warning(fmt.Sprintf("%s  not detected", a.DisplayName()))
@@ -60,6 +60,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 		if err := installAdapterCommands(a); err != nil {
 			ui.Error(fmt.Sprintf("%s  failed", a.DisplayName()), err.Error())
+			failed++
 			continue
 		}
 		installed++
@@ -82,6 +83,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 			if err := installMCPConfig(a, mcpPath); err != nil {
 				ui.Error(fmt.Sprintf("%s  MCP registration failed", a.DisplayName()), err.Error())
+				failed++
 			}
 		}
 	}
@@ -98,11 +100,35 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 			if err := installHooksConfig(a.DisplayName(), h); err != nil {
 				ui.Error(fmt.Sprintf("%s  hook registration failed", a.DisplayName()), err.Error())
+				failed++
 			}
 		}
 	}
 
+	if failed > 0 {
+		return fmt.Errorf("%d install step(s) failed", failed)
+	}
+	if installed > 0 && !installDryRun {
+		printInstallNextSteps()
+	}
 	return nil
+}
+
+// printInstallNextSteps tells a first-time user what to do after install.
+func printInstallNextSteps() {
+	ui.Blank()
+	ui.Plain("Next steps:")
+	ui.Plain("  1. Restart your AI tools so they load the new commands.")
+	ui.Plain("  2. In a project, run 'bifrost init' once.")
+	ui.Plain("  3. Run /handoff in one tool and /handin --verify in the next.")
+	if !installMCP {
+		ui.Dim("Recommended: 'bifrost install --mcp' for structured, verifiable handoffs.")
+	}
+	if !installHooks {
+		if a := adapters.Get("claude-code"); a != nil && a.IsInstalled() {
+			ui.Dim("Optional: 'bifrost install --hooks' records Claude Code sessions automatically.")
+		}
+	}
 }
 
 // bifrostCommands are the commands installed for every adapter.

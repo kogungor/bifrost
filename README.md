@@ -54,18 +54,22 @@ Active files
 ## Install
 
 ```bash
-brew tap kogungor/bifrost
-brew install --cask bifrost
+brew install --cask kogungor/bifrost/bifrost
 ```
+
+Use the full name: plain `brew install --cask bifrost` installs an unrelated app from Homebrew's main cask repository, even after `brew tap kogungor/bifrost`. If you did that, run `brew uninstall --cask bifrost` first.
 
 Or `curl -fsSL https://raw.githubusercontent.com/kogungor/bifrost/dev/install.sh | sh`, or download a binary from [GitHub Releases](https://github.com/kogungor/bifrost/releases).
 
-Then register the commands and the MCP server for every tool Bifrost detects, and check the result:
+Then register the commands and the MCP server for every tool Bifrost detects, set up each project once, and check the result:
 
 ```bash
 bifrost install --mcp
+cd your-project && bifrost init
 bifrost doctor
 ```
+
+Restart your AI tools afterwards so they load the new commands.
 
 | Tool        | Hand off           | Hand in                    | MCP server registered in           |
 | ----------- | ------------------ | -------------------------- | ---------------------------------- |
@@ -73,9 +77,9 @@ bifrost doctor
 | OpenCode    | `/handoff`         | `/handin --verify`         | `~/.config/opencode/opencode.json` |
 | Codex       | `$bifrost-handoff` | `$bifrost-handin --verify` | `~/.codex/config.toml`             |
 
-Without `--mcp` the commands still work by reading `.bifrost/session.md` directly; MCP gives the agent structured access to every field.
+Without `--mcp`, `/handoff` and `/handin` fall back to reading and writing `.bifrost/session.md` directly; `/plan` and `/review` need the MCP server.
 
-**Upgrading from 1.3.x or earlier:** those versions wrote MCP config where Claude Code and OpenCode never read it, so MCP was not active. Run `bifrost install --mcp --force`, then `bifrost doctor` to find the old files.
+**Upgrading.** `brew upgrade --cask kogungor/bifrost/bifrost`, then `bifrost install --mcp --force` (add `--hooks` if you use them) so your tools get the new command files; `install` alone keeps existing files. Versions 1.3.x and earlier wrote MCP config where Claude Code and OpenCode never read it; `bifrost doctor` finds those old files.
 
 ## Usage
 
@@ -95,13 +99,13 @@ From a terminal:
 
 ```bash
 bifrost verify                 # drift, changed files, evidence, risks, secrets
-bifrost brief --mode review    # compact briefing: implement, debug, review, or plan
+bifrost brief --mode review    # compact briefing: implement, debug, review, plan, or handoff
 bifrost diff                   # what changed since the previous snapshot
 ```
 
 **Automatic handoff (Claude Code).** `bifrost install --hooks` registers Claude Code hooks. Before a compaction and when a session ends, Bifrost records the commands the agent actually ran, with the exit codes from Claude Code's own transcript, and the files it edited. The compaction summary is kept as the handoff note, and a resumed or compacted session starts with the briefing. If no `/handoff` was written, an automatic snapshot holds the observed facts. Hooks act only in projects that already use Bifrost.
 
-**Plans across tools.** `/plan <name>` in one tool writes a structured plan; `/review <name>` in another critiques it and approves it or sends it back. Steps can list verification commands: `bifrost plan verify <name>` shows them, asks before running them, and marks passing steps `verified_done`.
+**Plans across tools.** `/plan <name>` in one tool writes a structured plan; `/review <name>` in another critiques it and approves it or sends it back. `bifrost plan status <name>` and `bifrost plan next <name>` show progress from a terminal. Each step can carry verification commands, such as the tests that cover it; `/plan` proposes them and `/review` checks them. `bifrost plan verify <name>` shows them, asks before running them, and marks passing steps `verified_done`.
 
 The [reference](docs/reference.md) covers every command, flag, file, and MCP tool.
 
@@ -132,7 +136,7 @@ A new tool needs one adapter file; see [CONTRIBUTING.md](CONTRIBUTING.md#adding-
 
 - State stays in `.bifrost/` inside your project; `bifrost init` adds it to `.gitignore`.
 - No telemetry. The only network calls are `bifrost update` and `bifrost update --check`, which read the latest release from the GitHub API.
-- Secret-like values are redacted before snapshots are written; `bifrost scrub` cleans existing state.
+- Secret-like values (API keys and tokens, private keys, credentials in URLs; [full list](docs/reference.md#secret-redaction)) are redacted before snapshots and notes are written; `bifrost scrub` cleans existing state.
 - `bifrost plan verify` never runs agent-written commands without your confirmation.
 
 ## What Bifrost Is Not

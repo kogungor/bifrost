@@ -73,6 +73,7 @@ type PlanStep struct {
 	Description string
 	Status      string // "pending", "done", "blocked"
 	Files       []string
+	Verify      []string // shell commands that prove the step is done; run by `bifrost plan verify`
 }
 
 // GenerateStepID creates a stable 8-hex-character ID from the step description and plan creation time.
@@ -205,8 +206,13 @@ func ReadPlan(projectRoot, name string) (*Plan, error) {
 }
 
 // WritePlan writes a named plan atomically with file locking.
+// WritePlan writes the Markdown plan and, when the plan already has JSON
+// execution state, brings that state in line with it.
 func WritePlan(projectRoot, name string, p *Plan) error {
-	return writePlan(projectRoot, name, p, true)
+	if err := writePlan(projectRoot, name, p, true); err != nil {
+		return err
+	}
+	return syncPlanJSON(projectRoot, name, p)
 }
 
 func writePlan(projectRoot, name string, p *Plan, emitTimeline bool) error {
@@ -259,8 +265,11 @@ func DeletePlan(projectRoot, name string) error {
 		}
 		return err
 	}
-	// Clean up lock file if it exists
+	// Clean up lock file and execution state if they exist
 	os.Remove(planLockPath(projectRoot, name))
+	if err := os.Remove(PlanJSONPath(projectRoot, name)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
@@ -425,6 +434,9 @@ func RenderPlan(p *Plan) string {
 			for _, f := range step.Files {
 				b.WriteString(fmt.Sprintf("  - `%s`\n", f))
 			}
+			for _, c := range step.Verify {
+				b.WriteString(fmt.Sprintf("  - verify: %s\n", renderPlanCommand(c)))
+			}
 		}
 	}
 	b.WriteString("\n")
@@ -527,6 +539,9 @@ func parsePlanSteps(section string) []PlanStep {
 			if strings.HasPrefix(nextLine, "- id: ") {
 				step.ID = strings.TrimPrefix(nextLine, "- id: ")
 				i++
+			} else if strings.HasPrefix(nextLine, "- verify: ") {
+				step.Verify = append(step.Verify, parsePlanCommand(strings.TrimPrefix(nextLine, "- verify: ")))
+				i++
 			} else if strings.HasPrefix(nextLine, "- `") && strings.HasSuffix(nextLine, "`") {
 				filePath := nextLine[3 : len(nextLine)-1] // strip "- `" and trailing "`"
 				step.Files = append(step.Files, filePath)
@@ -550,6 +565,22 @@ func parsePlanSteps(section string) []PlanStep {
 	}
 
 	return steps
+}
+
+// renderPlanCommand wraps a verification command in backticks unless it
+// contains one itself.
+func renderPlanCommand(command string) string {
+	if strings.Contains(command, "`") {
+		return command
+	}
+	return "`" + command + "`"
+}
+
+func parsePlanCommand(text string) string {
+	if len(text) >= 2 && strings.HasPrefix(text, "`") && strings.HasSuffix(text, "`") && !strings.Contains(text[1:len(text)-1], "`") {
+		return text[1 : len(text)-1]
+	}
+	return text
 }
 
 func parsePlanList(section string) []string {

@@ -409,9 +409,6 @@ func ValidatePlanV2(p *PlanV2) error {
 	if p.Title == "" {
 		errs.add("title", p.Title, "non-empty title")
 	}
-	if p.Goal == "" {
-		errs.add("goal", p.Goal, "non-empty goal")
-	}
 	validateRequiredEnum(errs, "status", p.Status, validPlanStatuses)
 	if p.Version == "" {
 		errs.add("version", p.Version, "non-empty version")

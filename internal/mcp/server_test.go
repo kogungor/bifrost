@@ -1834,3 +1834,99 @@ func TestReadSnapshotPrefersNewerMarkdownHandoff(t *testing.T) {
 		t.Fatalf("read_snapshot should return the newer session.md:\n%s", text)
 	}
 }
+
+func callToolForTest(t *testing.T, dir, name string, args map[string]any) map[string]any {
+	t.Helper()
+	ts := NewToolSet(dir)
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ts.Call(name, raw)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	encoded, _ := json.Marshal(result)
+	var out map[string]any
+	json.Unmarshal(encoded, &out)
+	return out
+}
+
+func TestPlanVerificationCommandsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	callToolForTest(t, dir, "bifrost_write_plan", map[string]any{
+		"source_tool": "test",
+		"title":       "Verify Test",
+		"goal":        "Prove steps",
+		"steps": []map[string]any{
+			{"description": "Build", "verify": []string{"go build ./...", "echo `date`"}},
+			{"description": "Docs"},
+		},
+	})
+
+	read := callToolForTest(t, dir, "bifrost_read_plan", map[string]any{})
+	steps := read["plan"].(map[string]any)["steps"].([]any)
+	verify := steps[0].(map[string]any)["verify"].([]any)
+	if len(verify) != 2 || verify[0] != "go build ./..." || verify[1] != "echo `date`" {
+		t.Fatalf("verify = %v", verify)
+	}
+	if got := steps[1].(map[string]any)["verify"].([]any); len(got) != 0 {
+		t.Fatalf("step without commands should report [], got %v", got)
+	}
+
+	plan, err := snapshot.LoadPlanForExecution(dir, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Steps[0].Verification == nil || len(plan.Steps[0].Verification.Commands) != 2 {
+		t.Fatalf("execution plan lost verification commands: %+v", plan.Steps[0])
+	}
+}
+
+func TestPlanUpdateVerifyResetsApproval(t *testing.T) {
+	dir := t.TempDir()
+	callToolForTest(t, dir, "bifrost_write_plan", map[string]any{
+		"source_tool": "planner",
+		"title":       "Approval Test",
+		"goal":        "Keep reviews honest",
+		"steps":       []map[string]any{{"description": "Test", "verify": []string{"go test ./..."}}},
+	})
+	callToolForTest(t, dir, "bifrost_update_plan", map[string]any{"source_tool": "reviewer", "review_outcome": "approved"})
+
+	unchanged := callToolForTest(t, dir, "bifrost_update_plan", map[string]any{
+		"step_updates": []map[string]any{{"index": 0, "verify": []string{"go test ./..."}}},
+	})
+	if unchanged["consensus_state"] != snapshot.ConsensusReached {
+		t.Fatalf("same commands should keep approval, got %v", unchanged["consensus_state"])
+	}
+
+	changed := callToolForTest(t, dir, "bifrost_update_plan", map[string]any{
+		"step_updates": []map[string]any{{"index": 0, "verify": []string{"true"}}},
+	})
+	if changed["consensus_state"] != snapshot.ConsensusNone || changed["status"] != snapshot.PlanStatusDraft {
+		t.Fatalf("changed commands should reset approval, got %v", changed)
+	}
+
+	callToolForTest(t, dir, "bifrost_update_plan", map[string]any{
+		"step_updates": []map[string]any{{"index": 0, "verify": []string{}}},
+	})
+	plan, err := snapshot.ReadPlan(dir, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Steps[0].Verify) != 0 {
+		t.Fatalf("[] should remove commands, got %v", plan.Steps[0].Verify)
+	}
+}
+
+func TestPlanVerifyRejectsMultilineCommands(t *testing.T) {
+	ts := NewToolSet(t.TempDir())
+	args, _ := json.Marshal(map[string]any{
+		"source_tool": "test",
+		"title":       "Bad",
+		"steps":       []map[string]any{{"description": "x", "verify": []string{"echo a\necho b"}}},
+	})
+	if _, err := ts.Call("bifrost_write_plan", args); err == nil || !strings.Contains(err.Error(), "single line") {
+		t.Fatalf("expected single-line error, got %v", err)
+	}
+}

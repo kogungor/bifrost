@@ -4,8 +4,11 @@ description: Bifrost plan. Create, revise, or track a structured implementation 
 ---
 
 In Codex this skill is invoked as `$bifrost-plan`. Wherever these instructions
-mention `/plan`, they mean this skill, and flags such as `--verify` are
-whatever the user typed after `$bifrost-plan`.
+mention `/plan`, they mean this skill, and its arguments are whatever the
+user typed after `$bifrost-plan`. Other Bifrost commands map the same way:
+`/handoff`, `/handin`, `/plan` and `/review` are `$bifrost-handoff`,
+`$bifrost-handin`, `$bifrost-plan` and `$bifrost-review`; use those names when
+you tell the user what to run next.
 
 Create a structured implementation plan and save it via Bifrost so another AI tool
 can review it.
@@ -50,6 +53,11 @@ Create a structured plan with:
 - **Steps**: Ordered list of implementation steps, each with:
   - A clear description of the work
   - List of files that will be created or modified
+  - Verification commands: shell commands that prove the step is done, such as
+    the test or build command that covers it (`go test ./internal/auth/...`,
+    `npm test -- auth`). Use the project's real commands from BIFROST.md or its
+    build files; leave the list empty when no command can check the step.
+    Keep each command to one line and make it safe to run repeatedly.
 - **Constraints**: Any requirements, limitations, or rules to follow
 
 **Step 4 — Write the plan**
@@ -59,7 +67,8 @@ Use the `bifrost_write_plan` MCP tool with these fields:
 - `name`: the plan name
 - `title`: the plan title
 - `goal`: the goal text
-- `steps`: array of `{description, files}` objects
+- `steps`: array of `{description, files, verify}` objects (`verify` is the
+  list of verification commands)
 - `constraints`: array of constraint strings
 
 The tool initializes `plan_version: 1`, `proposed_by`, `max_revisions: 3`, and
@@ -77,6 +86,7 @@ Print:
   Plan version  v1
   Steps         <count> steps defined (0% complete)
   Files         <total unique file count> files referenced
+  Verification  <count of steps with commands> of <count> steps have commands
 
   Ask another AI tool to run /review to get a critical analysis.
   Consensus required: reviewer must approve before work begins.
@@ -95,8 +105,9 @@ the feedback, update the plan, then signal the revision.
 2. Show the user the latest review notes (outcome + feedback).
 3. Ask the user what changes to make, or proceed with your own assessment of the
    feedback if the intent is clear.
-4. Apply content changes using `bifrost_update_plan` with `step_updates`,
-   updated `title`, or `goal` as needed.
+4. Apply content changes using `bifrost_update_plan` with `step_updates`
+   (step status, description, files and `verify` commands). A plan's title and goal cannot be
+   changed after creation; write a new plan if they must change.
 5. Signal the revision by calling `bifrost_update_plan` with `revise: true`.
    This increments `plan_version` and `revision_count`, and resets `consensus_state`.
 6. Print:
@@ -110,7 +121,7 @@ the feedback, update the plan, then signal the revision.
 
   Ask another AI tool to run /review again.
   <If revision_count >= max_revisions - 1:> Warning: approaching max revisions. Next
-  rejection will trigger deadlock. Consider /plan --force-accept if blocked.
+  rejection will trigger deadlock. Consider /plan <name> --force-accept if blocked.
 ```
 
 ---

@@ -46,8 +46,18 @@ func Success(msg string) {
 	write(fmt.Sprintf("  %s  %s\n", color(green, "✓"), msg))
 }
 
+// errorShown records whether Error has printed anything, so callers can tell
+// whether a returned error was already reported to the user.
+var errorShown bool
+
+// ErrorShown reports whether Error has been called.
+func ErrorShown() bool {
+	return errorShown
+}
+
 // Error prints an error line with hint: "  ✗  msg\n     hint"
 func Error(msg string, hint string) {
+	errorShown = true
 	write(fmt.Sprintf("  %s  %s\n", color(red, "✗"), msg))
 	if hint != "" {
 		write(fmt.Sprintf("     %s\n", color(gray, hint)))
