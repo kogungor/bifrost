@@ -372,7 +372,16 @@ A plan's title and goal are fixed once it is written; revisions change its steps
 
 A plan step can list shell commands that prove it is done. `bifrost plan verify` runs them and records the results as evidence Bifrost observed itself (`collector.command`).
 
-`/plan` does not write verification commands yet. Add them to the plan's JSON state, `.bifrost/plans/<name>.json`, under `steps[].verification.commands` (a list of shell commands). That file is created the first time `bifrost plan step`, `bifrost plan verify` or `bifrost migrate` runs for the plan.
+`/plan` writes these commands with each step (the `verify` list of `bifrost_write_plan`), and `/review` checks that they prove the step and are safe to run. In the Markdown plan they appear under the step:
+
+```
+- [ ] Add token refresh endpoint
+  - id: 3f2a9c1e
+  - `internal/auth/refresh.go`
+  - verify: `go test ./internal/auth/...`
+```
+
+Changing a step's commands with `bifrost_update_plan` resets an approved plan to draft, like any other content change. Results live in `.bifrost/plans/<name>.json`, created the first time `bifrost plan step` or `bifrost plan verify` runs; later edits through the MCP tools keep it in sync, and a step whose commands change loses its old result.
 
 ```bash
 bifrost plan step auth-refactor step_2 --claimed-done
@@ -630,7 +639,7 @@ bifrost diff
 | `.bifrost/handoff.md`               | Freeform handoff note                    | No      |
 | `.bifrost/history/`                 | Archived Markdown and JSON snapshots     | No      |
 | `.bifrost/evidence/`                | Optional structured evidence records     | No      |
-| `.bifrost/plans/<name>.json`        | JSON v2 plan state (created by `plan step`, `plan verify` or `migrate`) | No      |
+| `.bifrost/plans/<name>.json`        | Plan execution state: step status and verification results (created by `plan step`, `plan verify` or `migrate`) | No      |
 | `.bifrost/<name>.plan.md`           | Human-readable implementation plans      | No      |
 | `.bifrost/timeline.jsonl`           | Local snapshot/verify/plan event history | No      |
 | `.bifrost/config.json`              | Optional local Bifrost runtime config    | No      |
@@ -665,7 +674,7 @@ This writes config to each adapter's MCP config path: `~/.claude.json` for Claud
 | Tool                  | Description                                                        |
 | --------------------- | ------------------------------------------------------------------ |
 | `bifrost_read_plan`   | Read a named plan (default: "plan")                                |
-| `bifrost_write_plan`  | Create or overwrite a plan with title, goal, steps, and constraints |
-| `bifrost_update_plan` | Add review notes, update step statuses/content, change plan status |
+| `bifrost_write_plan`  | Create or overwrite a plan with title, goal, steps (with files and verification commands), and constraints |
+| `bifrost_update_plan` | Add review notes, update step status, content and verification commands, change plan status |
 | `bifrost_delete_plan` | Delete a named plan                                                |
 | `bifrost_list_plans`  | List all plans with name, status, title, and completion %          |

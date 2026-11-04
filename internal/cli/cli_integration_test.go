@@ -2222,3 +2222,55 @@ func TestVersionFlag(t *testing.T) {
 		t.Fatalf("--version: exit %d, output %q", code, out)
 	}
 }
+
+func TestPlanVerifyRunsCommandsFromMarkdownPlan(t *testing.T) {
+	home := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := &snapshot.Plan{
+		BifrostVersion: snapshot.CurrentVersion,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		SourceTool:     "test",
+		Status:         snapshot.PlanStatusActive,
+		Title:          "Written by /plan",
+		Steps: []snapshot.PlanStep{
+			{Description: "Passes", Status: "done", Verify: []string{"true"}},
+			{Description: "No commands", Status: "pending"},
+		},
+	}
+	if err := snapshot.WritePlan(home, "md", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, code := runBifrost(t, home, "plan", "verify", "md", "--yes", "--project", home)
+	if code != 0 {
+		t.Fatalf("plan verify failed (exit %d):\n%s", code, out)
+	}
+	state, err := snapshot.ReadPlanV2(home, "md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Steps[0].Status != "verified_done" {
+		t.Fatalf("step should be verified_done, got %q", state.Steps[0].Status)
+	}
+	md, err := snapshot.ReadPlan(home, "md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(md.Steps[0].Verify) != 1 || md.Steps[0].Verify[0] != "true" {
+		t.Fatalf("Markdown plan lost its verify commands: %+v", md.Steps[0])
+	}
+
+	// A plan without a goal (bifrost_write_plan allows one) must still migrate.
+	plan.Steps = []snapshot.PlanStep{{Description: "Only step", Status: "pending"}}
+	if err := snapshot.WritePlan(home, "nogoal", plan); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code = runBifrost(t, home, "migrate", "--project", home)
+	if code != 0 {
+		t.Fatalf("migrate should accept a plan without a goal (exit %d):\n%s", code, out)
+	}
+	if _, err := snapshot.ReadPlanV2(home, "nogoal"); err != nil {
+		t.Fatalf("migrated plan without a goal should be readable: %v", err)
+	}
+}

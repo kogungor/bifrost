@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -159,8 +160,62 @@ func applyPlanV2ToLegacy(legacy *Plan, plan *PlanV2) {
 			legacy.Steps[i].Status = planStepStatusFromV2(step.Status)
 			legacy.Steps[i].Description = step.Title
 			legacy.Steps[i].Files = step.ExpectedFiles
+			legacy.Steps[i].Verify = nil
+			if step.Verification != nil {
+				legacy.Steps[i].Verify = step.Verification.Commands
+			}
 		}
 	}
+}
+
+// syncPlanJSON keeps `.bifrost/plans/<name>.json` in line with a plan written
+// through its Markdown form (the MCP plan tools). A step keeps its execution
+// state while the Markdown leaves its status and verification commands alone;
+// changing the commands drops the old result, since it proved something else.
+func syncPlanJSON(projectRoot, name string, legacy *Plan) error {
+	if _, err := os.Stat(PlanJSONPath(projectRoot, name)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	previous, err := ReadPlanV2(projectRoot, name)
+	if err != nil {
+		return err
+	}
+	next := PlanToV2(legacy, name)
+	next.Extra = previous.Extra
+	byID := make(map[string]PlanStepV2, len(previous.Steps))
+	for _, step := range previous.Steps {
+		byID[step.ID] = step
+	}
+	for i := range next.Steps {
+		old, ok := byID[next.Steps[i].ID]
+		if !ok {
+			continue
+		}
+		sameCommands := slices.Equal(stepCommands(old), stepCommands(next.Steps[i]))
+		if planStepStatusFromV2(old.Status) == legacy.Steps[i].Status && (sameCommands || !isVerificationOutcome(old.Status)) {
+			next.Steps[i].Status = old.Status
+		}
+		if sameCommands && old.Verification != nil {
+			next.Steps[i].Verification = old.Verification
+		}
+	}
+	return WritePlanV2(projectRoot, next)
+}
+
+func stepCommands(step PlanStepV2) []string {
+	if step.Verification == nil {
+		return nil
+	}
+	return step.Verification.Commands
+}
+
+// isVerificationOutcome reports whether a step status came from running its
+// verification commands.
+func isVerificationOutcome(status string) bool {
+	return status == "verified_done" || status == "invalidated"
 }
 
 func planHealth(summary PlanExecutionSummary) int {

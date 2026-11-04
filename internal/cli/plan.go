@@ -158,7 +158,7 @@ func runPlanVerify(cmd *cobra.Command, args []string) error {
 	}
 	if queued == 0 {
 		ui.Warning("No plan verification commands configured.")
-		ui.Dim("Add verification.commands to the plan JSON or mark steps manually with `bifrost plan step`.")
+		ui.Dim("Ask the planning agent to add verify commands to its steps (/plan <name> --revise), or mark steps by hand with `bifrost plan step`.")
 		printPlanStatus(root, plan)
 		return nil
 	}
@@ -277,20 +277,20 @@ func loadPlanForCLI(name string) (string, *snapshot.PlanV2, error) {
 func printPlanStatus(root string, plan *snapshot.PlanV2) {
 	summary := snapshot.PlanExecutionSummaryFor(root, plan)
 	ui.Section("Plan", plan.Title)
-	ui.Plain(fmt.Sprintf("Name         %s", plan.Name))
-	ui.Plain(fmt.Sprintf("Status       %s", plan.Status))
-	ui.Plain(fmt.Sprintf("Health       %d/100", summary.Health))
-	ui.Plain(fmt.Sprintf("Steps        %d total", summary.Total))
-	ui.Plain(fmt.Sprintf("Verified     %d", summary.VerifiedDone))
-	ui.Plain(fmt.Sprintf("Claimed      %d", summary.ClaimedDone))
-	ui.Plain(fmt.Sprintf("In progress  %d", summary.InProgress))
-	ui.Plain(fmt.Sprintf("Blocked      %d", summary.Blocked))
-	ui.Plain(fmt.Sprintf("Not started  %d", summary.NotStarted))
+	ui.Section("Name", plan.Name)
+	ui.Section("Status", plan.Status)
+	ui.Section("Health", fmt.Sprintf("%d/100", summary.Health))
+	ui.Section("Steps", fmt.Sprintf("%d total", summary.Total))
+	ui.Section("Verified", fmt.Sprintf("%d", summary.VerifiedDone))
+	ui.Section("Claimed", fmt.Sprintf("%d", summary.ClaimedDone))
+	ui.Section("In progress", fmt.Sprintf("%d", summary.InProgress))
+	ui.Section("Blocked", fmt.Sprintf("%d", summary.Blocked))
+	ui.Section("Not started", fmt.Sprintf("%d", summary.NotStarted))
 	if summary.FailedVerify > 0 {
-		ui.Plain(fmt.Sprintf("Failed verify %d", summary.FailedVerify))
+		ui.Section("Failed verify", fmt.Sprintf("%d", summary.FailedVerify))
 	}
 	if summary.MissingFiles > 0 {
-		ui.Plain(fmt.Sprintf("Missing files %d", summary.MissingFiles))
+		ui.Section("Missing files", fmt.Sprintf("%d", summary.MissingFiles))
 	}
 	ui.Section("Next action", summary.NextAction)
 }

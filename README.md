@@ -105,7 +105,7 @@ bifrost diff                   # what changed since the previous snapshot
 
 **Automatic handoff (Claude Code).** `bifrost install --hooks` registers Claude Code hooks. Before a compaction and when a session ends, Bifrost records the commands the agent actually ran, with the exit codes from Claude Code's own transcript, and the files it edited. The compaction summary is kept as the handoff note, and a resumed or compacted session starts with the briefing. If no `/handoff` was written, an automatic snapshot holds the observed facts. Hooks act only in projects that already use Bifrost.
 
-**Plans across tools.** `/plan <name>` in one tool writes a structured plan; `/review <name>` in another critiques it and approves it or sends it back. `bifrost plan status <name>` and `bifrost plan next <name>` show progress from a terminal. Steps can carry verification commands (`steps[].verification.commands` in `.bifrost/plans/<name>.json`): `bifrost plan verify <name>` shows them, asks before running them, and marks passing steps `verified_done`.
+**Plans across tools.** `/plan <name>` in one tool writes a structured plan; `/review <name>` in another critiques it and approves it or sends it back. `bifrost plan status <name>` and `bifrost plan next <name>` show progress from a terminal. Each step can carry verification commands, such as the tests that cover it; `/plan` proposes them and `/review` checks them. `bifrost plan verify <name>` shows them, asks before running them, and marks passing steps `verified_done`.
 
 The [reference](docs/reference.md) covers every command, flag, file, and MCP tool.
 
