@@ -4,8 +4,11 @@ description: Bifrost handoff. Capture the current session state as a Bifrost sna
 ---
 
 In Codex this skill is invoked as `$bifrost-handoff`. Wherever these instructions
-mention `/handoff`, they mean this skill, and flags such as `--verify` are
-whatever the user typed after `$bifrost-handoff`.
+mention `/handoff`, they mean this skill, and its arguments are whatever the
+user typed after `$bifrost-handoff`. Other Bifrost commands map the same way:
+`/handoff`, `/handin`, `/plan` and `/review` are `$bifrost-handoff`,
+`$bifrost-handin`, `$bifrost-plan` and `$bifrost-review`; use those names when
+you tell the user what to run next.
 
 Capture the current session state as a Bifrost snapshot so the work can continue
 in another AI coding tool.

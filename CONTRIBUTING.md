@@ -126,6 +126,9 @@ When adding fields:
 CLI commands live in `internal/cli`. Current important surfaces include:
 
 ```text
+install (--mcp, --hooks), init, doctor, update, version
+status, export
+hook <event>                 (hidden; called by Claude Code hooks)
 validate, migrate, render
 snapshot --enrich
 evidence list/show
@@ -138,7 +141,6 @@ promote
 diff
 timeline
 history/restore
-doctor
 ```
 
 Guidelines:
@@ -199,6 +201,17 @@ type Adapter interface {
 }
 ```
 
+If the tool has lifecycle hooks, also implement the optional `HookInstaller`
+interface; `bifrost install --hooks` uses it:
+
+```go
+type HookInstaller interface {
+	HooksConfigPath() string                 // e.g. ~/.claude/settings.json
+	AddHooks(data []byte) ([]byte, error)    // add Bifrost's hook entries, keep the rest
+	HasHooks(data []byte) bool
+}
+```
+
 Check paths and config formats against the tool itself, not only its docs:
 run `bifrost install --mcp` with an isolated `HOME` and confirm the tool's own
 CLI lists the server (`claude mcp list`, `opencode mcp list`, `codex mcp list`).
@@ -246,10 +259,11 @@ README should answer:
 
 Releases are automated via GoReleaser on GitHub Actions:
 
-1. Tag a version: `git tag v0.2.0`
-2. Push the tag: `git push origin v0.2.0`
-3. GitHub Actions builds cross-platform binaries and creates a release
-4. The Homebrew cask is updated automatically
+1. Merge feature branches into `dev`, then open a PR from `dev` to `main`.
+2. After it merges, tag the merge commit on `main`: `git tag vX.Y.Z`
+3. Push the tag: `git push origin vX.Y.Z`
+4. GitHub Actions builds cross-platform binaries and creates the release.
+5. GoReleaser updates the cask in `kogungor/homebrew-bifrost`.
 
 ## Code Style
 

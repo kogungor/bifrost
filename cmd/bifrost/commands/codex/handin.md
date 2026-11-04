@@ -4,8 +4,11 @@ description: Bifrost handin. Load the latest Bifrost snapshot and brief the user
 ---
 
 In Codex this skill is invoked as `$bifrost-handin`. Wherever these instructions
-mention `/handin`, they mean this skill, and flags such as `--verify` are
-whatever the user typed after `$bifrost-handin`.
+mention `/handin`, they mean this skill, and its arguments are whatever the
+user typed after `$bifrost-handin`. Other Bifrost commands map the same way:
+`/handoff`, `/handin`, `/plan` and `/review` are `$bifrost-handoff`,
+`$bifrost-handin`, `$bifrost-plan` and `$bifrost-review`; use those names when
+you tell the user what to run next.
 
 Load the Bifrost context snapshot and brief the user before continuing.
 
@@ -186,7 +189,7 @@ Close the briefing block:
   ─────────────────────────────────────────
 ```
 
-If `/handin --verify` was used, prepend the verification summary from Step 2 to
+If `/handin --verify` was used, prepend the verification summary from Step 3 to
 this briefing.
 
 If `BIFROST.md` exists, prepend the briefing with:

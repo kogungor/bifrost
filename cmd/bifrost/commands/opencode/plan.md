@@ -86,8 +86,9 @@ the feedback, update the plan, then signal the revision.
 2. Show the user the latest review notes (outcome + feedback).
 3. Ask the user what changes to make, or proceed with your own assessment of the
    feedback if the intent is clear.
-4. Apply content changes using `bifrost_update_plan` with `step_updates`,
-   updated `title`, or `goal` as needed.
+4. Apply content changes using `bifrost_update_plan` with `step_updates`
+   (step status, description and files). A plan's title and goal cannot be
+   changed after creation; write a new plan if they must change.
 5. Signal the revision by calling `bifrost_update_plan` with `revise: true`.
    This increments `plan_version` and `revision_count`, and resets `consensus_state`.
 6. Print:
@@ -101,7 +102,7 @@ the feedback, update the plan, then signal the revision.
 
   Ask another AI tool to run /review again.
   <If revision_count >= max_revisions - 1:> Warning: approaching max revisions. Next
-  rejection will trigger deadlock. Consider /plan --force-accept if blocked.
+  rejection will trigger deadlock. Consider /plan <name> --force-accept if blocked.
 ```
 
 ---

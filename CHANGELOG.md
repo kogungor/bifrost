@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Homebrew install instructions** — `brew install --cask bifrost` installs an unrelated app from Homebrew's main cask repository, even after tapping. The README, reference and `bifrost update` now use the full name, `kogungor/bifrost/bifrost`.
+- **Silent failures** — unknown commands, unknown flags, missing arguments and unknown subcommands of `plan`, `evidence` and `context` exited 1 with no output. They now print the error and a usage hint.
+- **`bifrost --version`** works.
+- **`bifrost install`** exits non-zero when a step fails and ends with next steps.
+- **`bifrost doctor`** no longer counts a project without its first snapshot as a problem.
+- **Slash commands** — `/plan` no longer tells the agent to change a plan's title or goal, which `bifrost_update_plan` cannot do; suggested `/plan --revise` and `--force-accept` commands include the plan name; Codex skills name the other skills as `$bifrost-*`.
+
+### Changed
+
+- Help text: the root quick start puts `--mcp` and `bifrost init` first; `install`, `update`, `snapshot`, `diff` and `verify --fix` describe what they actually do; `bifrost hook` is hidden from the command list; `plan status` labels the next action "Next action".
+- Docs: upgrade steps, which commands need MCP, plan arguments and manual verification commands, the secret formats Bifrost redacts, Codex config paths, and the release process.
+
 ## [1.5.0] — 2026-11-02
 
 ### Added
